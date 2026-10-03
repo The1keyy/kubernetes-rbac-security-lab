@@ -1,39 +1,28 @@
 # Kubernetes RBAC Security Lab
 
 **Author:** [The1keyy](https://github.com/The1keyy)  
-**Repo:** https://github.com/The1keyy/kubernetes-rbac-security-lab
+**Repository:** https://github.com/The1keyy/kubernetes-rbac-security-lab  
+**License:** [MIT](LICENSE)
 
-I built this lab. The RBAC YAML, tests, and screenshots come from my local Minikube cluster.
+This project demonstrates Kubernetes authentication with X.509 client certificates and authorization with RBAC. I built it on a local Minikube cluster: three users, two namespaces, an Nginx workload, and tests for both allowed and denied access.
 
-Copy it, fork it, break it, teach with it. I do not mind. This is here so we can learn from each other. See [LICENSE](LICENSE) (MIT).
+The YAML in `manifests/` is what I applied. The screenshots are from that cluster. This is a learning lab, not a production environment.
 
-Local Minikube project for learning how Kubernetes decides **who you are** (X.509 certificates) versus **what you can do** (RBAC).
+The project is MIT licensed. You can fork it, reuse it, or use it to study Kubernetes access control.
 
-I set up three users, two namespaces, and an Nginx app, then tested both the permissions that worked and the ones that got Forbidden. The YAML in `manifests/` is what I applied. Screenshots are from that cluster.
+## Access model
 
-This is a learning lab, not a production cluster.
-
-## Who this is for
-
-- People learning Kubernetes security
-- Anyone who wants a small example of Role vs ClusterRole
-- Recruiters or reviewers who want the short version: three users, least privilege, namespace isolation, `kubectl auth can-i`
-
-If you only have two minutes, read the table below and look at the screenshots.
-
-## What I built
-
-| User | Where | Can do | Cannot do |
+| User | Scope | Allowed | Denied |
 | --- | --- | --- | --- |
-| `developer` | `security-lab` only | View / create / delete pods; manage deployments | Access `production`; read Secrets |
-| `auditor` | `security-lab` only | View pods | Create/delete pods; touch deployments; access `production` |
-| `security-admin` | Cluster-wide (pods) | View pods in every namespace | Delete pods; read Secrets; `cluster-admin` |
+| `developer` | `security-lab` only | View, create, and delete pods; manage deployments | `production` access; Secrets |
+| `auditor` | `security-lab` only | View pods | Create or delete pods; modify deployments; `production` access |
+| `security-admin` | Cluster-wide pod reads | View pods in every namespace | Delete pods; Secrets; `cluster-admin` |
 
-Namespaces: `security-lab` (Nginx, 3 replicas) and `production` (used to show isolation).
+Namespaces: `security-lab` (Nginx, 3 replicas) and `production` (used to verify isolation).
 
 ![Nginx in security-lab](screenshots/00-nginx-workload-security-lab.png)
 
-## How access works
+## Authentication vs authorization
 
 Kubernetes login and Kubernetes permissions are not the same thing.
 
@@ -59,7 +48,7 @@ Cert used for `developer`:
 
 Keys, CSRs, and kubeconfig are **not** in this repo. Make your own locally.
 
-## Layout
+## Repository layout
 
 ```text
 manifests/     RBAC YAML (Roles, RoleBindings, ClusterRole, ClusterRoleBinding)
@@ -67,10 +56,10 @@ screenshots/   Terminal captures from the lab
 diagrams/      Architecture diagram
 docs/          Notes on what I tested and what can go wrong
 scripts/       Empty on purpose (cert generation stays on your machine)
-LICENSE        MIT — reuse and learn from this
+LICENSE        MIT
 ```
 
-## Try it yourself
+## Run the lab locally
 
 You need Docker Desktop, Minikube, kubectl, and OpenSSL.
 
@@ -90,9 +79,9 @@ Then, on your machine:
 kubectl apply -f manifests/
 ```
 
-5. Run the `kubectl auth can-i` checks in the [Tests](#tests) section.
+5. Run the `kubectl auth can-i` checks in the [Validation](#validation) section.
 
-I am not publishing a cert-generation script because it needs the Minikube CA private key.
+There is no cert-generation script in this repository because that step requires the Minikube CA private key.
 
 ## The three users
 
@@ -121,7 +110,7 @@ Read-only pods in `security-lab`: get, list, watch.
 - [manifests/auditor-role.yaml](manifests/auditor-role.yaml)
 - [manifests/auditor-rolebinding.yaml](manifests/auditor-rolebinding.yaml)
 
-I did not take a separate auditor `kubectl get pods` screenshot. Auditor yes/no results are in the [can-i matrix](#tests).
+Auditor `kubectl get pods` is not captured as a separate screenshot. Allow and deny results for the auditor are in the [can-i matrix](#validation).
 
 ### Security admin
 
@@ -134,11 +123,11 @@ ClusterRole `security-admin-readonly` + ClusterRoleBinding. Pods: get, list, wat
 
 ![Security-admin can list pods across namespaces; delete is no](screenshots/07-security-admin-cross-namespace-access.png)
 
-`08-security-admin-delete-denied.png` is the same screenshot. I kept both names so the list of captures stays easy to follow.
+`08-security-admin-delete-denied.png` is the same capture as `07`. Both filenames are kept so the screenshot list stays consistent.
 
 **Role vs ClusterRole:** a Role stays in one namespace. A ClusterRoleBinding can follow the user across namespaces. That is why security-admin can see `production` and developer cannot.
 
-## Tests
+## Validation
 
 I used `kubectl auth can-i`. These are the results I captured:
 
@@ -157,24 +146,24 @@ I used `kubectl auth can-i`. These are the results I captured:
 
 Developer Secret access was not in that screenshot. The developer Role does not include `secrets`.
 
-More write-up: [docs/security-findings.md](docs/security-findings.md) and [docs/threat-model.md](docs/threat-model.md). Diagram: [diagrams/architecture.md](diagrams/architecture.md). Screenshot list: [screenshots/README.md](screenshots/README.md).
+Additional notes: [docs/security-findings.md](docs/security-findings.md), [docs/threat-model.md](docs/threat-model.md), [diagrams/architecture.md](diagrams/architecture.md), [screenshots/README.md](screenshots/README.md).
 
-## Do not commit
+## Credentials
 
-`.gitignore` already ignores:
+`.gitignore` excludes:
 
 - `*.key`, `*.csr`, `certificates/`
 - `kubeconfig`, `*.kubeconfig`
 - `ca.key`, `sa.key`
 
-Signing users with the Minikube CA is fine for this laptop lab. Do not treat that as how production should issue certs.
+Signing client certificates with the Minikube CA is appropriate for this local lab. It is not a production PKI design.
 
-## What I would add next
+## Possible next steps
 
-ServiceAccounts, NetworkPolicies, Pod Security Admission, and a small script that runs the `can-i` checks. Not in this repo yet.
+ServiceAccounts, NetworkPolicies, Pod Security Admission, and automated `can-i` checks are not in this repository yet.
 
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 [The1keyy](https://github.com/The1keyy).
 
-Use it, copy it, share it. I put this up so other people can learn Kubernetes RBAC the same way I did. Do not commit private keys.
+Reuse and sharing are welcome. Do not commit private keys or kubeconfig files.
