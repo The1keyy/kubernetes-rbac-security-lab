@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auditor-rolebinding
+  namespace: security-lab
+subjects:
+  - kind: User
+    name: auditor
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: auditor-role
+  apiGroup: rbac.authorization.k8s.io

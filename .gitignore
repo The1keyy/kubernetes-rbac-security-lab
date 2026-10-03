@@ -1,0 +1,25 @@
+# Private keys
+*.key
+
+# Certificate signing requests
+*.csr
+
+# Kubernetes config / credentials
+kubeconfig
+*.kubeconfig
+
+# Minikube / Kubernetes sensitive files
+ca.key
+sa.key
+
+# macOS
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.log
+certificates/
