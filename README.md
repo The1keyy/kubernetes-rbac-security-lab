@@ -1,10 +1,15 @@
 # Kubernetes RBAC Security Lab
 
+**Author:** [The1keyy](https://github.com/The1keyy)  
+**Repo:** https://github.com/The1keyy/kubernetes-rbac-security-lab
+
+I built this lab. The RBAC YAML, kubeconfig contexts, tests, and screenshots come from my local Minikube cluster. It is not a copy of someone else's project. You can fork it and learn from it under [MIT](LICENSE). Keep the copyright. Do not submit it as your own coursework or portfolio.
+
 Local Minikube project for learning how Kubernetes decides **who you are** (X.509 certificates) versus **what you can do** (RBAC).
 
-I set up three users, two namespaces, and an Nginx app, then tested both the permissions that worked and the ones that got Forbidden. The YAML in `manifests/` is what I actually applied. Screenshots are from that cluster.
+I set up three users, two namespaces, and an Nginx app, then tested both the permissions that worked and the ones that got Forbidden. The YAML in `manifests/` is what I applied. Screenshots are from that cluster.
 
-This is a learning lab, not a production cluster. You can copy it, run it, and change it. See [LICENSE](LICENSE) (MIT).
+This is a learning lab, not a production cluster.
 
 ## Who this is for
 
@@ -168,4 +173,6 @@ ServiceAccounts, NetworkPolicies, Pod Security Admission, and a small script tha
 
 ## License
 
-[MIT](LICENSE). Use this for class, practice, or your own lab. Keep the copyright notice. Do not copy anyone's private keys (there should not be any in this repo).
+[MIT](LICENSE). Copyright (c) 2026 [The1keyy](https://github.com/The1keyy).
+
+Use it for class or practice. Keep the copyright notice. Do not commit private keys. Do not copy this repo and claim you wrote it.
