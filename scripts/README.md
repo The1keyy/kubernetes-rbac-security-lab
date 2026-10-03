@@ -1,7 +1,7 @@
 # Scripts
 
-This directory is reserved for local helper scripts. None are published.
+Nothing in here on purpose.
 
-Certificate generation, CSR signing, and kubeconfig context setup were done on the workstation with OpenSSL and the local Minikube CA. Those steps use private keys and CA material that must not be committed.
+Certs and kubeconfig were created on my machine with OpenSSL and the Minikube CA. That uses private keys, so it stays off Git.
 
-To reproduce identities, generate keys and certificates locally, keep them under `certificates/` (gitignored), and point kubeconfig at those files. Then apply `manifests/` and run `kubectl auth can-i` as described in the root README.
+If you are following along: generate your own certs under `certificates/` (ignored), point kubeconfig at them, apply `manifests/`, then run `kubectl auth can-i` from the root README.

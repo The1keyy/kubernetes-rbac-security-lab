@@ -1,85 +1,33 @@
-# Security findings
+# What I saw in this lab
 
-Observations from building and testing this Minikube RBAC lab. Each finding matches something the manifests or documented tests actually demonstrate. Nothing here is inferred from a production cluster.
+Notes from the Minikube cluster. Only things I actually tested or that are in the YAML.
 
-## Finding 1 — Authentication does not equal authorization
+## Login is not permission
 
-The `developer` identity authenticated with an X.509 client certificate. Before RBAC was applied, listing pods in `security-lab` returned Forbidden:
+`developer` had a valid cert. Before any RoleBinding, `kubectl get pods` in `security-lab` returned Forbidden. The cert only names the user. The RoleBinding is what allows the API call.
 
-```text
-User "developer" cannot list resource "pods"
-in the namespace "security-lab"
-```
+## Developer stays in `security-lab`
 
-A valid certificate answers *who the user is*. It does not grant API access. Access starts only after a RoleBinding (or ClusterRoleBinding) exists.
+The developer Role is namespaced. Pods in `production` stay Forbidden. If that kubeconfig leaked, it would not automatically become production access.
 
-## Finding 2 — Developer permissions are namespace-scoped
+## Auditor is read-only
 
-`developer-role` and `developer-rolebinding` are namespaced to `security-lab`. The developer can use the granted pod and deployment verbs there. The same user is Forbidden for equivalent pod listing in `production`.
+`auditor-role` is get/list/watch on pods. Create, delete, and deployments are not in the Role. `kubectl auth can-i` returned yes for list and no for create/delete.
 
-Namespace-scoped RBAC contains blast radius: a stolen developer kubeconfig does not automatically become production access.
+## Secrets are not in these Roles
 
-## Finding 3 — Auditor follows least privilege
+None of the YAML files grant `secrets`. Security-admin `can-i get secrets` was `no`. Developer Secret access was not in the screenshot; it is also missing from the Role.
 
-`auditor-role` allows only `get`, `list`, and `watch` on pods in `security-lab`. Create pod, delete pod, and deployment access are not in the Role.
+## ClusterRole is wider even when it is read-only
 
-The auditor can inspect workloads in that namespace and cannot change or delete them through these RBAC rules.
+Security-admin can list pods in every namespace, including `production`. Delete is still `no`. A typo that added `delete` or `secrets` to that ClusterRole would apply everywhere the binding reaches. This user is not `cluster-admin`.
 
-## Finding 4 — Secrets remain restricted
+## The binding is the actual grant
 
-None of the Roles or the ClusterRole list `secrets` as a resource. Developer, auditor, and security-admin are therefore not granted Secret get/list by these manifests.
+A Role sitting in the cluster does nothing until a RoleBinding (or ClusterRoleBinding) points a user at it. Wrong subject name = wrong person gets the Role.
 
-The documented `kubectl auth can-i get secrets` checks are expected to return `no` for developer and security-admin. Restricting Secrets reduces the chance that a stolen user context can read credentials stored in the API.
+## Test the nos
 
-## Finding 5 — Cluster-scoped access increases blast radius
+`kubectl apply` succeeding is not a permission test. I used `kubectl auth can-i` for both yes and no. Results are in the root README and `screenshots/09-rbac-can-i-matrix.png`.
 
-`security-admin` is bound with a ClusterRoleBinding to `security-admin-readonly`. That grant is only pod `get`/`list`/`watch`, but it applies across namespaces, including `production`.
-
-Read-only cluster scope is still broader than a namespace Role. A ClusterRole that accidentally included `delete` or `secrets` would apply everywhere the binding reaches. This identity is not `cluster-admin` and cannot delete pods under these rules.
-
-## Finding 6 — RoleBindings determine who receives Roles
-
-Creating `developer-role` did not authorize the developer by itself. Authorization appeared after `developer-rolebinding` attached User `developer` to that Role in `security-lab`.
-
-If the subject name or `roleRef` is wrong, a different user inherits the Role. Review the binding as carefully as the rule list.
-
-## Finding 7 — ClusterRoleBindings require additional caution
-
-`security-admin` received cross-namespace pod visibility only after `security-admin-readonly-binding` attached the user to the ClusterRole.
-
-A mistaken ClusterRoleBinding is not limited to one namespace. In this lab the binding is narrow (pods, read verbs, named user). That pattern should stay the exception, not the default.
-
-## Finding 8 — Authorization should be explicitly tested
-
-Manifests applying successfully does not prove the permission model. This lab uses `kubectl auth can-i` for expected allows and expected denies, including:
-
-| Identity | Check | Expected |
-| --- | --- | --- |
-| Developer | list pods in `security-lab` | yes |
-| Developer | delete pods in `security-lab` | yes |
-| Developer | get secrets in `security-lab` | no |
-| Developer | list pods in `production` | no |
-| Auditor | list pods in `security-lab` | yes |
-| Auditor | create pods in `security-lab` | no |
-| Auditor | delete pods in `security-lab` | no |
-| Security Admin | list pods across namespaces | yes |
-| Security Admin | delete pods | no |
-| Security Admin | get secrets | no |
-
-Test the denies. They are the least-privilege proof.
-
-## Assessment
-
-Within the scope of this lab:
-
-- Authentication and authorization are separate.
-- Developer access is namespace-scoped.
-- Auditor access is read-only on pods.
-- Secrets are not granted.
-- Cluster-scoped pod reads increase visibility and need extra care.
-- Bindings, not Role objects alone, grant access.
-- `kubectl auth can-i` is the validation method used here.
-
-## Out of scope
-
-NetworkPolicies, Pod Security Standards, admission controllers, audit log pipelines, and image scanning are listed as future work. They were not demonstrated in this repository and are not claimed as findings.
+Not in this lab: NetworkPolicies, Pod Security, admission controllers, audit logs.
