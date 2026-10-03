@@ -91,6 +91,8 @@ security-lab
 
 A second namespace, `production`, exists so namespace isolation can be tested. Developer access is not granted there.
 
+![Nginx Deployment with three replicas in security-lab](screenshots/00-nginx-workload-security-lab.png)
+
 ## Authentication vs authorization
 
 **Authentication** answers *who are you?* Each lab user presents an X.509 client certificate. The certificate subject identifies the Kubernetes user, for example `CN=developer`.
@@ -100,10 +102,10 @@ A second namespace, `production`, exists so namespace isolation can be tested. D
 Before any Role or RoleBinding existed, the authenticated `developer` user could not list pods:
 
 ```text
-Error from server (Forbidden): pods is forbidden:
-User "developer" cannot list resource "pods"
-in the namespace "security-lab"
+Error from server (Forbidden): pods is forbidden: User "developer" cannot list resource "pods" in API group "" in the namespace "security-lab"
 ```
+
+![Developer authenticated but forbidden before RBAC](screenshots/02-developer-forbidden-before-rbac.png)
 
 A valid certificate therefore proves identity. It does not grant access.
 
@@ -114,6 +116,10 @@ Three users were created: `developer`, `auditor`, and `security-admin`.
 For each identity, a private key and Certificate Signing Request (CSR) were generated, the CSR was signed by the local Minikube certificate authority, and the resulting certificate and key were added to a local kubeconfig context.
 
 Authentication was confirmed **before** RBAC was applied, so the Forbidden responses below are authorization failures, not login failures.
+
+The developer client certificate used in this lab has subject `CN=developer` and issuer `CN=minikubeCA`.
+
+![X.509 certificate subject CN=developer](screenshots/01-certificate-identity.png)
 
 Private keys, CSRs, kubeconfig files, and CA material are not in this repository. See [Security precautions](#security-precautions).
 
@@ -133,6 +139,10 @@ Manifests:
 
 The RoleBinding subject is the User `developer`. Permissions apply only in `security-lab`. Secrets are not included. The identity is not `cluster-admin`.
 
+After the Role and RoleBinding were applied, the same user listed the three Nginx pods:
+
+![Developer listing Nginx pods after RBAC](screenshots/03-developer-access-after-rbac.png)
+
 ## Auditor RBAC
 
 The auditor is a read-only identity in `security-lab`.
@@ -141,7 +151,7 @@ The auditor is a read-only identity in `security-lab`.
 | --- | --- | --- |
 | pods | `""` (core) | `get`, `list`, `watch` |
 
-The auditor cannot create or delete pods and has no deployment verbs.
+The auditor cannot create or delete pods and has no deployment verbs. Dedicated `kubectl get pods` / create-delete screenshots for the auditor are not in this repository. The captured `kubectl auth can-i` matrix shows auditor `list pods` = `yes` and `create` / `delete` / `get deployments` = `no` in `security-lab`.
 
 Manifests:
 
@@ -153,10 +163,10 @@ Manifests:
 `developer` is authorized in `security-lab` only. Equivalent pod listing in `production` is denied:
 
 ```text
-Error from server (Forbidden): pods is forbidden:
-User "developer" cannot list resource "pods"
-in the namespace "production"
+Error from server (Forbidden): pods is forbidden: User "developer" cannot list resource "pods" in API group "" in the namespace "production"
 ```
+
+![Developer forbidden in the production namespace](screenshots/06-developer-denied-production.png)
 
 Namespace-scoped Roles limit blast radius: stolen developer credentials do not automatically become production credentials.
 
@@ -185,6 +195,14 @@ Manifests:
 
 That identity can list pods in both `security-lab` and `production`. It cannot delete pods, cannot read Secrets, and is not granted `cluster-admin`.
 
+`kubectl get pods -A --context=security-admin-context` returned pods from `kube-system` and `security-lab`. `kubectl get pods -n production` with the same context returned `No resources found in production namespace` rather than Forbidden, which is an authorized empty list. `kubectl auth can-i delete pods` in `security-lab` returned `no`.
+
+![Security-admin listing pods across namespaces](screenshots/07-security-admin-cross-namespace-access.png)
+
+![Security-admin delete pods denied](screenshots/08-security-admin-delete-denied.png)
+
+`07` and `08` are the same terminal session: cross-namespace reads and the delete denial appear together.
+
 Cluster-scoped bindings increase blast radius even when they are read-only. They should stay narrow and rare.
 
 ## Access-control matrix
@@ -199,78 +217,59 @@ Permissions below are what the manifests grant. “View Pods” for developer an
 
 ## Security validation
 
-RBAC was checked with `kubectl auth can-i` after the identities and bindings were in place. The commands below match the kubeconfig context names used in this lab. Expected answers follow from the YAML rules; they are not pasted terminal transcripts.
+RBAC was checked with `kubectl auth can-i` after the identities and bindings were in place. The results below were captured in the lab (see the screenshot). They match the YAML rules.
 
-**Developer**
+**Developer** (`developer-context`)
 
-```bash
-kubectl auth can-i list pods --context=developer-context -n security-lab
-# expected: yes
+| Check | Result |
+| --- | --- |
+| `list pods` in `security-lab` | `yes` |
+| `create pods` in `security-lab` | `yes` |
+| `delete pods` in `security-lab` | `yes` |
+| `get deployments` in `security-lab` | `yes` |
+| `list pods` in `production` | `no` |
 
-kubectl auth can-i create pods --context=developer-context -n security-lab
-# expected: yes
+**Auditor** (`auditor-context`)
 
-kubectl auth can-i delete pods --context=developer-context -n security-lab
-# expected: yes
+| Check | Result |
+| --- | --- |
+| `list pods` in `security-lab` | `yes` |
+| `create pods` in `security-lab` | `no` |
+| `delete pods` in `security-lab` | `no` |
+| `get deployments` in `security-lab` | `no` |
+| `list pods` in `production` | `no` |
 
-kubectl auth can-i get secrets --context=developer-context -n security-lab
-# expected: no
+**Security admin** (`security-admin-context`)
 
-kubectl auth can-i list pods --context=developer-context -n production
-# expected: no
-```
+| Check | Result |
+| --- | --- |
+| `list pods` in `security-lab` | `yes` |
+| `list pods` in `production` | `yes` |
+| `delete pods` in `security-lab` | `no` |
+| `get secrets` in `security-lab` | `no` |
 
-**Auditor**
+![kubectl auth can-i allow and deny matrix](screenshots/09-rbac-can-i-matrix.png)
 
-```bash
-kubectl auth can-i list pods --context=auditor-context -n security-lab
-# expected: yes
-
-kubectl auth can-i create pods --context=auditor-context -n security-lab
-# expected: no
-
-kubectl auth can-i delete pods --context=auditor-context -n security-lab
-# expected: no
-
-kubectl auth can-i get deployments --context=auditor-context -n security-lab
-# expected: no
-```
-
-**Security admin**
-
-```bash
-kubectl auth can-i list pods --context=security-admin-context -n security-lab
-# expected: yes
-
-kubectl auth can-i list pods --context=security-admin-context -n production
-# expected: yes
-
-kubectl auth can-i delete pods --context=security-admin-context -n security-lab
-# expected: no
-
-kubectl auth can-i get secrets --context=security-admin-context -n security-lab
-# expected: no
-```
+Developer Secret access was not included in that capture. The developer Role does not list `secrets`, so Secret get/list is not granted by these manifests.
 
 Denied actions are as important as allowed ones. A Role that only appears to work because `kubectl apply` succeeded is not validated.
 
 ## Screenshots / evidence
 
-Screenshots are intended as evidence that authentication, RBAC, and isolation were tested on the cluster. Capture guidance is in [screenshots/README.md](screenshots/README.md).
+Terminal captures from the Minikube lab. Index and naming notes: [screenshots/README.md](screenshots/README.md).
 
-This repository currently has **no screenshot files**. The table below is the evidence set to capture, not a claim that the images are present.
-
-| Intended file | Concept | What it should prove |
+| File | Concept | What it proves |
 | --- | --- | --- |
-| `01-certificate-identity.png` | Authentication | X.509 subject such as `CN=developer` |
+| `00-nginx-workload-security-lab.png` | Test workload | Nginx Deployment, 3/3 pods in `security-lab` |
+| `01-certificate-identity.png` | Authentication | X.509 subject `CN=developer`, issuer `CN=minikubeCA` |
 | `02-developer-forbidden-before-rbac.png` | AuthN vs AuthZ | Authenticated developer cannot list pods until RBAC exists |
-| `03-developer-access-after-rbac.png` | RBAC | Developer can list the three Nginx pods in `security-lab` |
-| `04-auditor-readonly-access.png` | Least privilege | Auditor can list pods |
-| `05-auditor-denied-create-delete.png` | Least privilege | `kubectl auth can-i` returns `no` for create/delete |
+| `03-developer-access-after-rbac.png` | RBAC | Developer lists the three Nginx pods after RoleBinding |
 | `06-developer-denied-production.png` | Namespace isolation | Developer is Forbidden in `production` |
-| `07-security-admin-cross-namespace-access.png` | ClusterRole | Security-admin can view pods across namespaces |
-| `08-security-admin-delete-denied.png` | Least privilege | Security-admin cannot delete pods |
-| `09-rbac-can-i-matrix.png` | Validation | Grouped `kubectl auth can-i` allow/deny results |
+| `07-security-admin-cross-namespace-access.png` | ClusterRole | Security-admin can `get pods -A` |
+| `08-security-admin-delete-denied.png` | Least privilege | Same session: `auth can-i delete pods` returns `no` |
+| `09-rbac-can-i-matrix.png` | Validation | Grouped allow/deny results for all three identities |
+
+Not captured as separate files: `04-auditor-readonly-access.png` (auditor `kubectl get pods`) and `05-auditor-denied-create-delete.png`. Auditor allow/deny is in `09-rbac-can-i-matrix.png`.
 
 ## Security findings
 
@@ -312,7 +311,15 @@ kubernetes-rbac-security-lab/
 │   ├── security-admin-clusterrole.yaml
 │   └── security-admin-clusterrolebinding.yaml
 ├── screenshots/
-│   └── README.md
+│   ├── README.md
+│   ├── 00-nginx-workload-security-lab.png
+│   ├── 01-certificate-identity.png
+│   ├── 02-developer-forbidden-before-rbac.png
+│   ├── 03-developer-access-after-rbac.png
+│   ├── 06-developer-denied-production.png
+│   ├── 07-security-admin-cross-namespace-access.png
+│   ├── 08-security-admin-delete-denied.png
+│   └── 09-rbac-can-i-matrix.png
 ├── diagrams/
 │   └── architecture.md
 ├── docs/
