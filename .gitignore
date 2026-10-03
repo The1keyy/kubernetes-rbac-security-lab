@@ -1,5 +1,7 @@
 # Private keys
 *.key
+ca.key
+sa.key
 
 # Certificate signing requests
 *.csr
@@ -8,9 +10,8 @@
 kubeconfig
 *.kubeconfig
 
-# Minikube / Kubernetes sensitive files
-ca.key
-sa.key
+# Local identity material (keys, CSRs, certs)
+certificates/
 
 # macOS
 .DS_Store
@@ -22,4 +23,3 @@ sa.key
 # Temporary files
 *.tmp
 *.log
-certificates/

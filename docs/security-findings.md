@@ -1,232 +1,85 @@
-Security Findings
+# Security findings
 
-Overview
+Observations from building and testing this Minikube RBAC lab. Each finding matches something the manifests or documented tests actually demonstrate. Nothing here is inferred from a production cluster.
 
-This document summarizes the main security observations identified while building and testing the Kubernetes RBAC Security Lab.
+## Finding 1 — Authentication does not equal authorization
 
-The lab focused on authentication, authorization, least privilege, namespace isolation, and controlled cluster-wide access.
+The `developer` identity authenticated with an X.509 client certificate. Before RBAC was applied, listing pods in `security-lab` returned Forbidden:
 
-Finding 1 — Authentication Does Not Grant Access
-
-Observation
-
-The developer identity successfully authenticated using an X.509 certificate.
-
-Before any RBAC permissions were assigned, the user attempted to list pods in the security-lab namespace and received a Forbidden response.
-
-Evidence
-
+```text
 User "developer" cannot list resource "pods"
 in the namespace "security-lab"
+```
 
-Security Impact
+A valid certificate answers *who the user is*. It does not grant API access. Access starts only after a RoleBinding (or ClusterRoleBinding) exists.
 
-This confirms that Kubernetes separates authentication from authorization.
+## Finding 2 — Developer permissions are namespace-scoped
 
-A valid certificate proves who the user is, but does not automatically grant access to cluster resources.
+`developer-role` and `developer-rolebinding` are namespaced to `security-lab`. The developer can use the granted pod and deployment verbs there. The same user is Forbidden for equivalent pod listing in `production`.
 
-Security Control
+Namespace-scoped RBAC contains blast radius: a stolen developer kubeconfig does not automatically become production access.
 
-Use RBAC to explicitly define which actions authenticated identities are allowed to perform.
+## Finding 3 — Auditor follows least privilege
 
-Finding 2 — Developer Access Is Namespace Scoped
+`auditor-role` allows only `get`, `list`, and `watch` on pods in `security-lab`. Create pod, delete pod, and deployment access are not in the Role.
 
-Observation
+The auditor can inspect workloads in that namespace and cannot change or delete them through these RBAC rules.
 
-The developer user was granted permissions inside the security-lab namespace using a Role and RoleBinding.
+## Finding 4 — Secrets remain restricted
 
-The developer could successfully access allowed resources in security-lab.
+None of the Roles or the ClusterRole list `secrets` as a resource. Developer, auditor, and security-admin are therefore not granted Secret get/list by these manifests.
 
-However, the same user was denied equivalent access in the production namespace.
+The documented `kubectl auth can-i get secrets` checks are expected to return `no` for developer and security-admin. Restricting Secrets reduces the chance that a stolen user context can read credentials stored in the API.
 
-Evidence
+## Finding 5 — Cluster-scoped access increases blast radius
 
-Allowed:
+`security-admin` is bound with a ClusterRoleBinding to `security-admin-readonly`. That grant is only pod `get`/`list`/`watch`, but it applies across namespaces, including `production`.
 
-developer -> security-lab -> allowed
+Read-only cluster scope is still broader than a namespace Role. A ClusterRole that accidentally included `delete` or `secrets` would apply everywhere the binding reaches. This identity is not `cluster-admin` and cannot delete pods under these rules.
 
-Denied:
+## Finding 6 — RoleBindings determine who receives Roles
 
-developer -> production -> Forbidden
+Creating `developer-role` did not authorize the developer by itself. Authorization appeared after `developer-rolebinding` attached User `developer` to that Role in `security-lab`.
 
-Security Impact
+If the subject name or `roleRef` is wrong, a different user inherits the Role. Review the binding as carefully as the rule list.
 
-Namespace-scoped RBAC reduces the blast radius of compromised developer credentials.
+## Finding 7 — ClusterRoleBindings require additional caution
 
-Security Control
+`security-admin` received cross-namespace pod visibility only after `security-admin-readonly-binding` attached the user to the ClusterRole.
 
-Use namespace-specific Roles and RoleBindings instead of broader cluster-wide permissions when possible.
+A mistaken ClusterRoleBinding is not limited to one namespace. In this lab the binding is narrow (pods, read verbs, named user). That pattern should stay the exception, not the default.
 
-Finding 3 — Auditor Follows Least Privilege
+## Finding 8 — Authorization should be explicitly tested
 
-Observation
+Manifests applying successfully does not prove the permission model. This lab uses `kubectl auth can-i` for expected allows and expected denies, including:
 
-The auditor identity was granted only read-only pod permissions.
+| Identity | Check | Expected |
+| --- | --- | --- |
+| Developer | list pods in `security-lab` | yes |
+| Developer | delete pods in `security-lab` | yes |
+| Developer | get secrets in `security-lab` | no |
+| Developer | list pods in `production` | no |
+| Auditor | list pods in `security-lab` | yes |
+| Auditor | create pods in `security-lab` | no |
+| Auditor | delete pods in `security-lab` | no |
+| Security Admin | list pods across namespaces | yes |
+| Security Admin | delete pods | no |
+| Security Admin | get secrets | no |
 
-Allowed actions:
+Test the denies. They are the least-privilege proof.
 
-get
-list
-watch
+## Assessment
 
-Denied actions included:
+Within the scope of this lab:
 
-create pods
-delete pods
-modify deployments
+- Authentication and authorization are separate.
+- Developer access is namespace-scoped.
+- Auditor access is read-only on pods.
+- Secrets are not granted.
+- Cluster-scoped pod reads increase visibility and need extra care.
+- Bindings, not Role objects alone, grant access.
+- `kubectl auth can-i` is the validation method used here.
 
-Security Impact
+## Out of scope
 
-The auditor can inspect workloads without being able to change or destroy them.
-
-Security Control
-
-Grant only the minimum permissions required for the user's responsibilities.
-
-Finding 4 — Sensitive Resources Remain Restricted
-
-Observation
-
-The developer and security-admin identities were not granted access to Kubernetes Secrets.
-
-Permission validation showed denied access.
-
-Security Impact
-
-Secrets may contain sensitive values such as credentials, tokens, and application configuration.
-
-Restricting Secret access reduces the risk of credential exposure.
-
-Security Control
-
-Do not include sensitive resource types in RBAC rules unless they are explicitly required.
-
-Finding 5 — Cluster-Wide Access Increases Scope
-
-Observation
-
-A ClusterRole and ClusterRoleBinding were used to grant the security-admin identity read-only pod visibility across namespaces.
-
-The account could view pods across namespaces but could not delete pods.
-
-Security Impact
-
-Cluster-scoped access can increase blast radius compared with namespace-scoped access.
-
-A poorly designed ClusterRole or ClusterRoleBinding could expose multiple namespaces.
-
-Security Control
-
-Use narrow ClusterRoles and avoid unrestricted cluster-admin access unless absolutely necessary.
-
-Finding 6 — RoleBindings Control Who Receives Permissions
-
-Observation
-
-Creating a Role alone did not assign permissions to the developer.
-
-Access was granted only after creating a RoleBinding between:
-
-developer
-    |
-RoleBinding
-    |
-developer-role
-
-Security Impact
-
-An incorrect RoleBinding could grant permissions to the wrong identity.
-
-Security Control
-
-Review both the Role permissions and the RoleBinding subjects before deployment.
-
-Finding 7 — ClusterRoleBindings Require Greater Caution
-
-Observation
-
-The security-admin identity gained cross-namespace pod visibility only after a ClusterRoleBinding connected the user to the ClusterRole.
-
-Security Impact
-
-A misconfigured ClusterRoleBinding can provide access across the entire cluster rather than a single namespace.
-
-Security Control
-
-ClusterRoleBindings should be rare, narrowly scoped, and reviewed carefully.
-
-Finding 8 — Authorization Must Be Tested
-
-Observation
-
-Permissions were validated using:
-
-kubectl auth can-i
-
-Both allowed and denied operations were tested.
-
-Examples included:
-
-Developer:
-list pods -> yes
-delete pods -> yes
-get secrets -> no
-production access -> no
-
-Auditor:
-list pods -> yes
-create pods -> no
-delete pods -> no
-
-Security Admin:
-list pods across namespaces -> yes
-delete pods -> no
-get secrets -> no
-
-Security Impact
-
-RBAC configuration should not be assumed to work correctly just because YAML manifests deploy successfully.
-
-Security Control
-
-Explicitly test expected permissions and expected denials after configuring RBAC.
-
-Overall Security Assessment
-
-The lab successfully demonstrated several important Kubernetes security principles:
-
-Authentication and authorization are separate controls
-
-Permissions should follow least privilege
-
-Namespace isolation limits blast radius
-
-Cluster-scoped access requires stronger review
-
-RoleBindings and ClusterRoleBindings directly determine who receives permissions
-
-Sensitive resources should remain restricted unless explicitly required
-
-Authorization should be tested using both positive and negative cases
-
-Recommended Improvements
-
-Future improvements to the lab could include:
-
-Kubernetes NetworkPolicies
-
-Pod Security Standards
-
-ServiceAccount security
-
-Admission control
-
-Kyverno or OPA Gatekeeper policies
-
-Kubernetes audit logging
-
-Secrets management
-
-Image vulnerability scanning
-
-Automated RBAC validation in CI/CD
+NetworkPolicies, Pod Security Standards, admission controllers, audit log pipelines, and image scanning are listed as future work. They were not demonstrated in this repository and are not claimed as findings.

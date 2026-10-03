@@ -1,539 +1,309 @@
-Kubernetes RBAC Security Lab
+# Kubernetes RBAC Security Lab
 
-Project Overview
+This local Minikube lab shows how Kubernetes authenticates users with X.509 certificates and then authorizes them with RBAC. Three identities — `developer`, `auditor`, and `security-admin` — receive least-privilege access, while positive and negative tests confirm both allowed and denied actions.
 
-This project demonstrates how Kubernetes authentication and authorization work together to enforce secure access to cluster resources.
+## Why this project matters
 
-Using a local Minikube environment, I created multiple certificate-based Kubernetes users and implemented Role-Based Access Control (RBAC) to demonstrate:
+Cluster-admin access is convenient and dangerous. If every operator, pipeline, or compromised laptop inherits broad permissions, a single credential leak can create, modify, or delete workloads across namespaces.
 
-X.509 certificate authentication
+This lab treats that as a security problem, not a YAML exercise. It separates authentication from authorization, scopes developer access to one namespace, gives an auditor read-only pod visibility, and grants a cluster-scoped identity only the pod-read permissions it needs — not `cluster-admin`.
 
-Kubernetes authorization
+## Security objectives
 
-Least-privilege access
+- Authenticate users with X.509 client certificates (`CN=developer`, `CN=auditor`, `CN=security-admin`).
+- Authorize those users with Kubernetes RBAC, not implicit admin rights.
+- Apply least privilege: each identity receives only the verbs and resources required for its role.
+- Isolate namespaces so `security-lab` permissions do not apply to `production`.
+- Contrast namespace-scoped `Role` / `RoleBinding` with cluster-scoped `ClusterRole` / `ClusterRoleBinding`.
+- Keep Kubernetes Secrets out of these identities’ permission sets.
+- Validate access with `kubectl auth can-i` for both allow and deny cases.
 
-Namespace isolation
+## Architecture
 
-Role and RoleBinding
+Two namespaces exist in the local cluster. The Nginx test workload runs in `security-lab`. `production` is used only to prove that developer permissions do not cross namespaces.
 
-ClusterRole and ClusterRoleBinding
+```mermaid
+flowchart TD
+    D[Developer]
+    A[Auditor]
+    S[Security Admin]
 
-Controlled cross-namespace access
+    AUTH[X.509 Authentication]
 
-Successful and denied authorization attempts
+    D --> AUTH
+    A --> AUTH
+    S --> AUTH
 
-Permission validation using kubectl auth can-i
+    AUTH --> DRB[RoleBinding]
+    AUTH --> ARB[RoleBinding]
+    AUTH --> CRB[ClusterRoleBinding]
 
-The lab intentionally includes both allowed and denied actions to show how Kubernetes can limit access based on a user's role.
+    DRB --> DR[Developer Role]
+    ARB --> AR[Auditor Role]
+    CRB --> CR[Read-Only ClusterRole]
 
-Security Problem
+    DR --> SL[security-lab]
+    AR --> SL
+    CR --> SL
+    CR --> PR[production]
 
-Giving every Kubernetes user broad administrative permissions increases the potential impact of compromised credentials or user error.
+    SL --> NGINX[Nginx Deployment]
+    NGINX --> P1[3 Pods]
 
-This lab demonstrates how Kubernetes RBAC can reduce that risk by granting each identity only the permissions required for its role.
+    PR --> DENY[Developer denied]
+    PR --> RO[Security Admin read-only pod visibility]
+```
 
-Three identities were created:
+A longer description lives in [diagrams/architecture.md](diagrams/architecture.md).
 
-developer — manages selected workloads in the development namespace
+## Environment
 
-auditor — read-only access to pods
+This is a **local Minikube lab**. It is not a production Kubernetes cluster, managed cloud service, or production PKI.
 
-security-admin — controlled read-only pod visibility across namespaces
+| Item | Value |
+| --- | --- |
+| Host | macOS |
+| Architecture | Apple Silicon |
+| Container runtime | Docker Desktop |
+| Kubernetes | Minikube |
+| CLI | kubectl |
+| Authentication | X.509 client certificates |
+| Authorization | Kubernetes RBAC |
 
-Architecture
+No cloud accounts or paid infrastructure are required.
 
-                        Kubernetes Cluster
-                              |
-              +---------------+---------------+
-              |                               |
-       security-lab                       production
-              |                               |
-        Nginx Deployment                      |
-         3 Replicas                           |
-              |                               |
-     +--------+---------+                     |
-     |                  |                     |
- developer            auditor                 |
-     |                  |                     |
- RoleBinding         RoleBinding              |
-     |                  |                     |
-developer-role       auditor-role             |
-     |                  |                     |
-Manage selected      Read-only pods           |
-workloads                                      |
-                                               |
-                    security-admin ------------+
-                          |
-                  ClusterRoleBinding
-                          |
-               security-admin-readonly
-                          |
-               Read pods across namespaces
+## Technologies used
 
-Technologies Used
+Kubernetes, Minikube, Docker Desktop, kubectl, OpenSSL, YAML, Git, GitHub.
 
-Kubernetes
+## Test workload
 
-Minikube
+A namespace named `security-lab` hosts an Nginx Deployment with three replicas. That Deployment is the protected resource used for RBAC tests.
 
-Docker Desktop
-
-kubectl
-
-OpenSSL
-
-YAML
-
-macOS Terminal
-
-Git
-
-GitHub
-
-Environment
-
-The project was built completely locally with no paid cloud resources.
-
-Host: macOS
-Architecture: Apple Silicon
-Container Runtime: Docker Desktop
-Kubernetes: Minikube
-CLI: kubectl
-Authentication: X.509 Certificates
-Authorization: Kubernetes RBAC
-
-Test Application
-
-A namespace called security-lab was created containing an Nginx Deployment with three replicas.
-
+```text
 security-lab
 └── nginx Deployment
     └── ReplicaSet
         ├── nginx Pod
         ├── nginx Pod
         └── nginx Pod
+```
 
-This workload serves as the protected resource used throughout the RBAC testing.
+A second namespace, `production`, exists so namespace isolation can be tested. Developer access is not granted there.
 
-Authentication vs Authorization
+## Authentication vs authorization
 
-One of the main goals of this project was demonstrating the difference between authentication and authorization.
+**Authentication** answers *who are you?* Each lab user presents an X.509 client certificate. The certificate subject identifies the Kubernetes user, for example `CN=developer`.
 
-Authentication
+**Authorization** answers *what are you allowed to do?* Kubernetes RBAC decides whether that authenticated user may get, list, create, or delete a resource.
 
-Authentication answers:
+Before any Role or RoleBinding existed, the authenticated `developer` user could not list pods:
 
-Who are you?
-
-Each Kubernetes user was configured using an X.509 certificate.
-
-For example:
-
-CN=developer
-
-identifies the user as:
-
-developer
-
-Authorization
-
-Authorization answers:
-
-What are you allowed to do?
-
-Kubernetes RBAC determines whether an authenticated identity can perform an action.
-
-Before RBAC permissions were assigned, the authenticated developer received:
-
+```text
 Error from server (Forbidden): pods is forbidden:
 User "developer" cannot list resource "pods"
 in the namespace "security-lab"
+```
 
-This demonstrates that successful authentication does not automatically grant authorization.
+A valid certificate therefore proves identity. It does not grant access.
 
-Certificate-Based Identities
+## X.509 identity creation overview
 
-The following Kubernetes identities were created:
+Three users were created: `developer`, `auditor`, and `security-admin`.
 
-developer
-auditor
-security-admin
+For each identity, a private key and Certificate Signing Request (CSR) were generated, the CSR was signed by the local Minikube certificate authority, and the resulting certificate and key were added to a local kubeconfig context.
 
-For each identity:
+Authentication was confirmed **before** RBAC was applied, so the Forbidden responses below are authorization failures, not login failures.
 
-A private key was generated.
+Private keys, CSRs, kubeconfig files, and CA material are not in this repository. See [Security precautions](#security-precautions).
 
-A Certificate Signing Request (CSR) was generated.
+## Developer RBAC
 
-The CSR was signed by the local Minikube Certificate Authority.
+The developer uses a namespace-scoped `Role` and `RoleBinding` in `security-lab`.
 
-The certificate and private key were configured in kubeconfig.
+| Resource | API group | Verbs |
+| --- | --- | --- |
+| pods | `""` (core) | `get`, `list`, `watch`, `create`, `delete` |
+| deployments | `apps` | `get`, `list`, `watch`, `create`, `update`, `patch`, `delete` |
 
-A Kubernetes context was created.
+Manifests:
 
-Authentication was tested before RBAC access was granted.
+- [manifests/developer-role.yaml](manifests/developer-role.yaml)
+- [manifests/developer-rolebinding.yaml](manifests/developer-rolebinding.yaml)
 
-Sensitive certificate material is not included in this repository.
+The RoleBinding subject is the User `developer`. Permissions apply only in `security-lab`. Secrets are not included. The identity is not `cluster-admin`.
 
-Kubernetes RBAC
+## Auditor RBAC
 
-Developer Role
+The auditor is a read-only identity in `security-lab`.
 
-The developer receives namespace-scoped permissions inside:
+| Resource | API group | Verbs |
+| --- | --- | --- |
+| pods | `""` (core) | `get`, `list`, `watch` |
 
-security-lab
+The auditor cannot create or delete pods and has no deployment verbs.
 
-Pod Permissions
+Manifests:
 
-get
-list
-watch
-create
-delete
+- [manifests/auditor-role.yaml](manifests/auditor-role.yaml)
+- [manifests/auditor-rolebinding.yaml](manifests/auditor-rolebinding.yaml)
 
-Deployment Permissions
+## Namespace isolation
 
-get
-list
-watch
-create
-update
-patch
-delete
+`developer` is authorized in `security-lab` only. Equivalent pod listing in `production` is denied:
 
-The developer does not receive unrestricted access to the cluster.
-
-Auditor Role
-
-The auditor demonstrates strict least-privilege access.
-
-The auditor can only:
-
-get pods
-list pods
-watch pods
-
-The auditor cannot:
-
-create pods
-delete pods
-modify deployments
-access unauthorized resources
-
-This demonstrates a read-only security role.
-
-Namespace Isolation
-
-A second namespace was created:
-
-production
-
-The developer is authorized in:
-
-security-lab
-
-but receives a Forbidden response when attempting equivalent operations in:
-
-production
-
-Example:
-
+```text
 Error from server (Forbidden): pods is forbidden:
 User "developer" cannot list resource "pods"
 in the namespace "production"
+```
 
-Namespace-scoped RBAC helps reduce blast radius because compromised credentials are limited to the namespaces where permissions have explicitly been granted.
+Namespace-scoped Roles limit blast radius: stolen developer credentials do not automatically become production credentials.
 
-Role vs ClusterRole
+## Role vs ClusterRole
 
-Role
+A **Role** grants permissions inside one namespace. `developer-role` and `auditor-role` exist only in `security-lab`.
 
-A Kubernetes Role defines permissions within a specific namespace.
+A **RoleBinding** attaches a user to that Role. Without the binding, the Role does nothing for that user.
 
-Example:
+A **ClusterRole** defines permissions that can apply cluster-wide. A **ClusterRoleBinding** attaches a user to that ClusterRole across namespaces.
 
-developer-role
-        |
-        v
-security-lab only
+This lab uses cluster-scoped objects only for the security-admin identity, and only for read-only pod access.
 
-RoleBinding
+## ClusterRole and ClusterRoleBinding example
 
-A RoleBinding connects an identity to a Role.
+`security-admin` is bound to ClusterRole `security-admin-readonly`:
 
-developer
-    |
-RoleBinding
-    |
-developer-role
+| Resource | API group | Verbs |
+| --- | --- | --- |
+| pods | `""` (core) | `get`, `list`, `watch` |
 
-ClusterRole
+Manifests:
 
-A ClusterRole defines reusable permissions that can apply across the cluster.
+- [manifests/security-admin-clusterrole.yaml](manifests/security-admin-clusterrole.yaml)
+- [manifests/security-admin-clusterrolebinding.yaml](manifests/security-admin-clusterrolebinding.yaml)
 
-For this lab, the following ClusterRole was created:
+That identity can list pods in both `security-lab` and `production`. It cannot delete pods, cannot read Secrets, and is not granted `cluster-admin`.
 
-security-admin-readonly
+Cluster-scoped bindings increase blast radius even when they are read-only. They should stay narrow and rare.
 
-It grants:
+## Access-control matrix
 
-get
-list
-watch
+Permissions below are what the manifests grant. “View Pods” for developer and auditor is namespace-scoped to `security-lab`. Security-admin pod reads are cluster-scoped.
 
-access to pods.
+| Identity | View Pods | Create Pods | Delete Pods | Deployment Access | Production Access | Secrets |
+| --- | --- | --- | --- | --- | --- | --- |
+| Developer | Yes | Yes | Yes | Yes | No | No |
+| Auditor | Yes | No | No | No | No | No |
+| Security Admin | Yes | No | No | No | Read-only pods | No |
 
-ClusterRoleBinding
+## Security validation
 
-A ClusterRoleBinding was used to grant the security-admin identity read-only pod visibility across namespaces.
+RBAC was checked with `kubectl auth can-i` after the identities and bindings were in place. The commands below match the kubeconfig context names used in this lab. Expected answers follow from the YAML rules; they are not pasted terminal transcripts.
 
-security-admin
-        |
-ClusterRoleBinding
-        |
-security-admin-readonly
-        |
-Pods across namespaces
+**Developer**
 
-The identity was intentionally not granted unrestricted cluster-admin privileges.
-
-Access Control Matrix
-
-Identity
-
-View Pods
-
-Create Pods
-
-Delete Pods
-
-Deployment Access
-
-Production Access
-
-Developer
-
-Yes
-
-Yes
-
-Yes
-
-Yes
-
-No
-
-Auditor
-
-Yes
-
-No
-
-No
-
-No
-
-No
-
-Security Admin
-
-Yes
-
-No
-
-No
-
-No
-
-Read-only pods
-
-Additional sensitive resources such as Kubernetes Secrets were intentionally not granted to these identities.
-
-Security Validation
-
-Permissions were tested using:
-
-kubectl auth can-i
-
-Developer
-
+```bash
 kubectl auth can-i list pods --context=developer-context -n security-lab
-
-Expected:
-
-yes
+# expected: yes
 
 kubectl auth can-i create pods --context=developer-context -n security-lab
-
-Expected:
-
-yes
+# expected: yes
 
 kubectl auth can-i delete pods --context=developer-context -n security-lab
-
-Expected:
-
-yes
+# expected: yes
 
 kubectl auth can-i get secrets --context=developer-context -n security-lab
-
-Expected:
-
-no
+# expected: no
 
 kubectl auth can-i list pods --context=developer-context -n production
+# expected: no
+```
 
-Expected:
+**Auditor**
 
-no
-
-Auditor
-
+```bash
 kubectl auth can-i list pods --context=auditor-context -n security-lab
-
-Expected:
-
-yes
+# expected: yes
 
 kubectl auth can-i create pods --context=auditor-context -n security-lab
-
-Expected:
-
-no
+# expected: no
 
 kubectl auth can-i delete pods --context=auditor-context -n security-lab
-
-Expected:
-
-no
+# expected: no
 
 kubectl auth can-i get deployments --context=auditor-context -n security-lab
+# expected: no
+```
 
-Expected:
+**Security admin**
 
-no
-
-Security Admin
-
+```bash
 kubectl auth can-i list pods --context=security-admin-context -n security-lab
-
-Expected:
-
-yes
+# expected: yes
 
 kubectl auth can-i list pods --context=security-admin-context -n production
-
-Expected:
-
-yes
+# expected: yes
 
 kubectl auth can-i delete pods --context=security-admin-context -n security-lab
-
-Expected:
-
-no
+# expected: no
 
 kubectl auth can-i get secrets --context=security-admin-context -n security-lab
+# expected: no
+```
 
-Expected:
+Denied actions are as important as allowed ones. A Role that only appears to work because `kubectl apply` succeeded is not validated.
 
-no
+## Screenshots / evidence
 
-Security Findings
+Screenshots are intended as evidence that authentication, RBAC, and isolation were tested on the cluster. Capture guidance is in [screenshots/README.md](screenshots/README.md).
 
-1. Authentication Does Not Equal Authorization
+This repository currently has **no screenshot files**. The table below is the evidence set to capture, not a claim that the images are present.
 
-An X.509 certificate successfully authenticated the developer identity, but Kubernetes denied access until RBAC permissions were explicitly assigned.
+| Intended file | Concept | What it should prove |
+| --- | --- | --- |
+| `01-certificate-identity.png` | Authentication | X.509 subject such as `CN=developer` |
+| `02-developer-forbidden-before-rbac.png` | AuthN vs AuthZ | Authenticated developer cannot list pods until RBAC exists |
+| `03-developer-access-after-rbac.png` | RBAC | Developer can list the three Nginx pods in `security-lab` |
+| `04-auditor-readonly-access.png` | Least privilege | Auditor can list pods |
+| `05-auditor-denied-create-delete.png` | Least privilege | `kubectl auth can-i` returns `no` for create/delete |
+| `06-developer-denied-production.png` | Namespace isolation | Developer is Forbidden in `production` |
+| `07-security-admin-cross-namespace-access.png` | ClusterRole | Security-admin can view pods across namespaces |
+| `08-security-admin-delete-denied.png` | Least privilege | Security-admin cannot delete pods |
+| `09-rbac-can-i-matrix.png` | Validation | Grouped `kubectl auth can-i` allow/deny results |
 
-Security Value
+## Security findings
 
-Compromised or newly created credentials do not automatically gain access to cluster resources.
+The lab findings are documented in [docs/security-findings.md](docs/security-findings.md). In short:
 
-2. Least Privilege Limits Capabilities
+1. Authentication is not authorization.
+2. Developer permissions stay inside `security-lab`.
+3. The auditor is read-only on pods.
+4. Secrets are not granted to these identities.
+5. Cluster-scoped access increases blast radius even when it is read-only.
+6. RoleBindings decide who receives a Role.
+7. ClusterRoleBindings need extra review.
+8. Authorization should be tested, not assumed.
 
-The auditor was intentionally restricted to viewing pods.
+## Threat model
 
-The identity could inspect workloads but could not create, delete, or modify them.
+See [docs/threat-model.md](docs/threat-model.md). The lab considers:
 
-Security Value
+- Overprivileged users
+- Compromised Kubernetes credentials
+- Excessive ClusterRole permissions
+- Cross-namespace lateral movement
+- RoleBinding misconfiguration
+- ClusterRoleBinding misconfiguration
 
-Limiting permissions reduces the damage that can occur if credentials are misused or compromised.
+Each threat is paired with a control used in this lab and a validation method such as `kubectl auth can-i` or a Forbidden API response.
 
-3. Namespace Isolation Reduces Blast Radius
+## Repository structure
 
-Developer permissions assigned in security-lab did not automatically apply to production.
-
-Security Value
-
-A compromised developer identity would not automatically provide access to workloads in other namespaces.
-
-4. Cluster-Wide Permissions Require Additional Care
-
-ClusterRole and ClusterRoleBinding can grant permissions across namespaces.
-
-The security-admin example was intentionally limited to read-only pod access rather than unrestricted cluster administration.
-
-Security Value
-
-Cluster-scoped access should be narrowly defined because incorrect ClusterRoleBindings can significantly increase blast radius.
-
-Threat Model
-
-The detailed threat model is available in:
-
-docs/threat-model.md
-
-Primary threats considered include:
-
-Overprivileged users
-
-Compromised Kubernetes credentials
-
-Excessive ClusterRole permissions
-
-Cross-namespace lateral movement
-
-Incorrect RoleBinding configuration
-
-Incorrect ClusterRoleBinding configuration
-
-Screenshots / Evidence
-
-Recommended security evidence captured during the lab includes:
-
-Authentication without authorization
-
-Developer authenticated but receives Forbidden before RBAC
-
-Developer authorization
-
-Developer successfully lists Nginx pods after RoleBinding
-
-Auditor least privilege
-
-Auditor can list pods
-Auditor cannot create pods
-Auditor cannot delete pods
-
-Namespace isolation
-
-Developer receives Forbidden when accessing production
-
-ClusterRole validation
-
-Security-admin can view pods across namespaces
-Security-admin cannot delete pods
-
-Permission validation
-
-kubectl auth can-i
-
-results showing both allowed and denied operations.
-
-Repository Structure
-
+```text
 kubernetes-rbac-security-lab/
 ├── README.md
+├── .gitignore
 ├── manifests/
 │   ├── developer-role.yaml
 │   ├── developer-rolebinding.yaml
@@ -542,105 +312,69 @@ kubernetes-rbac-security-lab/
 │   ├── security-admin-clusterrole.yaml
 │   └── security-admin-clusterrolebinding.yaml
 ├── screenshots/
+│   └── README.md
 ├── diagrams/
-├── scripts/
+│   └── architecture.md
 ├── docs/
-│   ├── security-findings.md
-│   └── threat-model.md
-└── .gitignore
+│   ├── threat-model.md
+│   └── security-findings.md
+└── scripts/
+    └── README.md
+```
 
-Security Note
+## Security precautions
 
-Private keys, Certificate Signing Requests, kubeconfig credentials, cluster CA private keys, and other sensitive authentication material are intentionally excluded from this repository.
+Private keys, CSRs, kubeconfig credentials, Minikube CA private keys, and other authentication material are excluded from Git.
 
-The following types of files should never be committed:
+Do not commit:
 
-*.key
-*.csr
-kubeconfig
-*.kubeconfig
-ca.key
-sa.key
-certificates/
+- `*.key`
+- `*.csr`
+- `kubeconfig` / `*.kubeconfig`
+- `ca.key` / `sa.key`
+- `certificates/`
 
-Production Kubernetes environments should use secure certificate lifecycle management and should not expose Certificate Authority private keys to normal administrators or developers.
+`.gitignore` already covers those patterns. Local certificate files used for this lab live under `certificates/` on the workstation and are ignored.
 
-Reproducing the Lab
+This lab signed client certificates with the local Minikube CA because that is how a Minikube cluster authenticates users. That is not a production certificate-management design. Production clusters should use a controlled PKI or an identity provider, and CA private keys should not be available to application developers.
 
-The safe portions of this lab can be reproduced locally using:
+## Reproduction overview
 
-Docker Desktop
+Reproduce the **authorization** portion locally with Docker Desktop, Minikube, and kubectl:
 
-Minikube
-
-kubectl
-
-OpenSSL
-
-Kubernetes YAML manifests
-
-Start a local cluster:
-
+```bash
 minikube start
-
-Verify:
-
 kubectl get nodes
-
-Apply the included RBAC manifests after creating the required identities:
-
 kubectl apply -f manifests/
+```
 
-Certificate private keys and kubeconfig credentials are intentionally not included and should be generated locally.
+Namespaces (`security-lab`, `production`), the Nginx Deployment, X.509 users, and kubeconfig contexts must be created on the local machine. Those credentials are not published here.
 
-Lessons Learned
+After identities exist, apply the manifests and re-run the `kubectl auth can-i` checks in [Security validation](#security-validation).
 
-This project reinforced several important Kubernetes security concepts:
+## Lessons learned
 
-Authentication identifies a user but does not determine permissions.
+- A certificate identifies a user; RBAC decides what that user can do.
+- Least privilege is a set of verbs and resources, not a role name.
+- Namespace-scoped Roles contain blast radius.
+- RoleBindings and ClusterRoleBindings are the actual grant.
+- Cluster-scoped read access is still cluster-scoped access.
+- Test denies as well as allows.
+- Credentials do not belong in Git.
 
-RBAC should follow the principle of least privilege.
+## Future improvements
 
-Roles can restrict access to specific namespaces.
+Natural extensions of this lab, not implemented here:
 
-RoleBindings connect identities to namespace-scoped permissions.
+- ServiceAccount RBAC and workload identity
+- NetworkPolicies
+- Pod Security Standards / Pod Security Admission
+- Secrets encryption and access review
+- Admission policies (Kyverno or OPA Gatekeeper)
+- Kubernetes audit logging
+- Image scanning
+- Automated RBAC tests in CI
 
-ClusterRoles can define permissions usable across namespaces.
+---
 
-ClusterRoleBindings should be used carefully because they increase access scope.
-
-Authorization should be explicitly tested instead of assumed.
-
-Both successful and failed access attempts provide useful security validation.
-
-Sensitive credentials should never be stored in public Git repositories.
-
-Future Improvements
-
-Potential extensions to this project include:
-
-Kubernetes ServiceAccount security
-
-NetworkPolicies
-
-Pod Security Standards
-
-Secrets management
-
-Admission control
-
-OPA Gatekeeper or Kyverno policies
-
-Kubernetes audit logging
-
-Container image scanning
-
-CI/CD security validation
-
-Automated RBAC testing
-
-Disclaimer
-
-This project was created in a local Minikube environment for educational and security testing purposes.
-
-It is not intended to represent a production Kubernetes PKI or certificate-management architecture.
+This project is an educational Minikube lab. It does not represent production Kubernetes operations, production PKI, or a live multi-tenant platform.
