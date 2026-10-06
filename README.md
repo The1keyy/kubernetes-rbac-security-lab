@@ -1,12 +1,15 @@
 # Kubernetes RBAC Security Lab
 
-**The1keyy** · MIT · Minikube
+**Keyshawn Jeannot** · GitHub [@The1keyy](https://github.com/The1keyy) · MIT · Minikube
 
 A hands-on Kubernetes security lab that shows authentication, least-privilege RBAC, workload identity, Pod Security Admission, NetworkPolicy enforcement, audit logging, automated authorization testing, and RBAC analysis.
 
 Portfolio evidence for Kubernetes Security, Cloud Security, DevSecOps, Platform Security, and Security Engineering.
 
 This is a learning lab, not a production Kubernetes environment.
+
+- Case study: https://the1keyy.github.io/kubernetes-rbac-security-lab/
+- Repository: https://github.com/The1keyy/kubernetes-rbac-security-lab
 
 ```bash
 ./scripts/setup.sh
@@ -142,7 +145,7 @@ Denied: delete pods, read Secrets, and unrestricted cluster administration.
 
 ![Automated RBAC test matrix with 15 passed and 0 failed](screenshots/11-automated-rbac-pass-matrix.png)
 
-*Passed: 15. Failed: 0. All RBAC tests passed, so the same checks can be rerun after a security change.*
+*Passed: 15. Failed: 0. That result is the local run captured in the screenshot. The same checks can be rerun after a security change.*
 
 ## ServiceAccount security
 
@@ -241,7 +244,7 @@ kubectl who-can delete pods -n security-lab
 
 ![kubectl-who-can lists subjects that can delete pods](screenshots/21-rbac-scanner-delete-pods.png)
 
-*The scanner shows the developer RoleBinding grants pod deletion in `security-lab`.*
+*The scanner shows the developer RoleBinding grants pod deletion in `security-lab`. Cluster system identities that can delete pods are listed as well.*
 
 See [security-scans/rbac-findings.md](security-scans/rbac-findings.md).
 
@@ -265,12 +268,25 @@ See [security-scans/rbac-findings.md](security-scans/rbac-findings.md).
 ./scripts/cleanup.sh
 ```
 
+## Static checks
+
+[`.github/workflows/security-checks.yml`](.github/workflows/security-checks.yml) runs on push and pull request to `main`. It checks Bash syntax, runs ShellCheck on `scripts/setup.sh`, `scripts/cleanup.sh`, and `scripts/test-rbac.sh`, and lints the YAML under `manifests/`, `misconfigurations/`, `audit/`, and `.github/workflows/`.
+
+The workflow file is not evidence that the latest run passed. The 15 passed / 0 failed figure comes from the local `scripts/test-rbac.sh` capture above.
+
 ## Repository structure
 
 ```text
 kubernetes-rbac-security-lab/
 ├── README.md
+├── index.html
+├── style.css
 ├── LICENSE
+├── images/
+│   └── keyshawn-jeannot.png
+├── .github/
+│   └── workflows/
+│       └── security-checks.yml
 ├── manifests/
 │   ├── namespaces.yaml
 │   ├── nginx-deployment.yaml
@@ -345,7 +361,7 @@ Do not commit private keys, cluster CA private keys, Kubernetes Secrets, bearer 
 
 ## Tools
 
-Kubernetes, Minikube, Docker Desktop, Calico, kubectl, kubectl-who-can, Krew, OpenSSL, Bash, YAML, Git, GitHub, and macOS Terminal.
+Kubernetes, Minikube, Docker Desktop, Calico, kubectl, kubectl-who-can, Krew, OpenSSL, Bash, YAML, Git, GitHub, GitHub Actions, and macOS Terminal.
 
 ## Key security lessons
 
@@ -363,5 +379,7 @@ Kubernetes, Minikube, Docker Desktop, Calico, kubectl, kubectl-who-can, Krew, Op
 ## License
 
 MIT. This repository is for learning, security experimentation, and portfolio demonstration.
+
+The case study page is `index.html` and `style.css` at the repository root. GitHub Pages publishes that root from `main` at https://the1keyy.github.io/kubernetes-rbac-security-lab/.
 
 Do not commit sensitive Kubernetes credentials or private keys.
