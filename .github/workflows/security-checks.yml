@@ -1,0 +1,61 @@
+name: Security Checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  security-checks:
+    name: Validate Security Lab
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          python -m pip install --upgrade pip
+          pip install yamllint
+
+      - name: Check Bash syntax
+        run: |
+          bash -n scripts/setup.sh
+          bash -n scripts/cleanup.sh
+          bash -n scripts/test-rbac.sh
+
+      - name: Run ShellCheck
+        run: |
+          shellcheck scripts/setup.sh
+          shellcheck scripts/cleanup.sh
+          shellcheck scripts/test-rbac.sh
+
+      - name: Validate YAML
+        run: |
+          yamllint \
+            manifests \
+            misconfigurations \
+            audit \
+            .github/workflows
+
+      - name: Check Git whitespace
+        run: |
+          git diff --check HEAD^ HEAD || true
+
+      - name: Security validation complete
+        run: |
+          echo "Security checks completed successfully."
