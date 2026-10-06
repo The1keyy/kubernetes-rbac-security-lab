@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kubernetes RBAC Security Lab · Keyshawn Jeannot</title>
+  <meta name="description" content="A hands-on Kubernetes security lab demonstrating X.509 authentication, least-privilege RBAC, namespace isolation, ServiceAccounts, Pod Security Admission, Calico NetworkPolicy, audit logging, and automated authorization testing.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0c1014">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23141a21'/%3E%3Cpath d='M16 6l8 3.2v6.4c0 5-3.4 8.4-8 9.9-4.6-1.5-8-4.9-8-9.9V9.2L16 6z' fill='none' stroke='%238fb9a8' stroke-width='1.6'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#overview">Skip to content</a>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#top">
+        <img src="images/keyshawn-jeannot.png" width="460" height="460" alt="">
+        <span>Keyshawn Jeannot</span>
+      </a>
+      <nav class="nav" aria-label="Page">
+        <a href="#overview">Overview</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#access">Access</a>
+        <a href="#controls">Controls</a>
+        <a href="#evidence">Evidence</a>
+        <a href="#scenarios">Scenarios</a>
+        <a href="#validation">Validation</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <div class="byline">
+            <img src="images/keyshawn-jeannot.png" width="460" height="460" alt="Portrait of Keyshawn Jeannot">
+            <div>
+              <p class="byline-name">Keyshawn Jeannot</p>
+              <p class="byline-meta"><a href="https://github.com/The1keyy">GitHub · The1keyy</a></p>
+            </div>
+          </div>
+          <p class="kicker">Security case study</p>
+          <h1>Kubernetes RBAC Security Lab</h1>
+          <p class="proof">A local Minikube lab that separates who you are from what you are allowed to do. The captured authorization run is 15 passed and 0 failed.</p>
+          <p class="lede">A hands-on Kubernetes security lab demonstrating X.509 authentication, least-privilege RBAC, namespace isolation, ServiceAccounts, Pod Security Admission, Calico NetworkPolicy enforcement, Kubernetes audit logging, automated authorization testing, and RBAC permission analysis.</p>
+          <p class="roles">For Cloud Security, Security Engineering, DevSecOps, Platform Security, and Kubernetes Security roles.</p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/The1keyy/kubernetes-rbac-security-lab">View GitHub Repository</a>
+            <a class="button" href="#evidence">View Security Evidence</a>
+          </div>
+          <ul class="badges" aria-label="Technologies">
+            <li>Kubernetes</li>
+            <li>Minikube</li>
+            <li>Docker</li>
+            <li>Calico</li>
+            <li>RBAC</li>
+            <li>OpenSSL</li>
+            <li>Bash</li>
+            <li>GitHub Actions</li>
+          </ul>
+        </div>
+        <aside class="outcome" aria-label="Captured authorization test result">
+          <p class="kicker">Captured test run</p>
+          <p class="outcome-score"><strong>15</strong> passed<span>0</span> failed</p>
+          <p>scripts/test-rbac.sh compared kubectl auth can-i results for developer, auditor, and security-admin.</p>
+          <dl class="outcome-meta">
+            <div>
+              <dt>Namespaces</dt>
+              <dd>security-lab and production</dd>
+            </div>
+            <div>
+              <dt>Identities</dt>
+              <dd>developer, auditor, security-admin, app-reader</dd>
+            </div>
+            <div>
+              <dt>Setting</dt>
+              <dd>Local Minikube lab, not a production cluster</dd>
+            </div>
+          </dl>
+        </aside>
+      </div>
+    </section>
+
+    <section id="overview" class="section">
+      <div class="wrap">
+        <p class="kicker">Project overview</p>
+        <h2>A local lab for defense in depth</h2>
+        <p>Keyshawn Jeannot built this as a local security learning and portfolio lab on Minikube. It is not a production environment. No lab identity is granted unrestricted cluster-admin.</p>
+        <p>The lab stacks controls so a single grant, a bad pod spec, or an open network path is not the only line of defense. Each layer answers a different question.</p>
+        <ol class="layers">
+          <li>
+            <strong>Identity</strong>
+            <span>X.509 client certificates establish who is calling the API.</span>
+          </li>
+          <li>
+            <strong>Authorization</strong>
+            <span>RBAC decides which API verbs that identity may use.</span>
+          </li>
+          <li>
+            <strong>Workload identity</strong>
+            <span>The app-reader ServiceAccount carries its own least-privilege role.</span>
+          </li>
+          <li>
+            <strong>Workload admission</strong>
+            <span>Pod Security Admission rejects a privileged pod before it runs.</span>
+          </li>
+          <li>
+            <strong>Network isolation</strong>
+            <span>Calico enforces a NetworkPolicy that RBAC cannot express.</span>
+          </li>
+          <li>
+            <strong>Auditing</strong>
+            <span>Metadata audit events record allow and forbid decisions.</span>
+          </li>
+          <li>
+            <strong>Automated validation</strong>
+            <span>A repeatable auth can-i suite checks the expected allows and denies.</span>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="architecture" class="section">
+      <div class="wrap">
+        <p class="kicker">Architecture</p>
+        <h2>One cluster, two namespaces, four identities</h2>
+        <p class="section-intro">The workload is a three-replica Nginx Deployment in <code>security-lab</code>. <code>production</code> exists so namespace scope can be tested. <code>security-admin</code> is the only cluster-scoped lab identity, and it is limited to pod reads.</p>
+
+        <div class="cluster">
+          <p class="cluster-name">Minikube cluster</p>
+          <div class="ns-grid">
+            <article class="ns">
+              <h3>security-lab</h3>
+              <p>Primary namespace for the workload, human users, and the application ServiceAccount.</p>
+              <ul class="chips">
+                <li>Nginx deployment · 3 replicas</li>
+                <li>developer</li>
+                <li>auditor</li>
+                <li>app-reader ServiceAccount</li>
+                <li>Pod Security baseline</li>
+                <li>NetworkPolicy deny-nginx-ingress</li>
+              </ul>
+            </article>
+            <article class="ns">
+              <h3>production</h3>
+              <p>Isolation boundary. developer and app-reader are denied here. security-admin can list pods.</p>
+            </article>
+          </div>
+          <article class="ns cluster-wide">
+            <h3>Cluster-wide</h3>
+            <p>security-admin uses a read-only ClusterRole: get, list, and watch pods. Delete, Secrets, and cluster-admin stay denied.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="access" class="section">
+      <div class="wrap">
+        <p class="kicker">Access model</p>
+        <h2>What each identity can and cannot do</h2>
+        <p class="section-intro">Permissions are explicit. A successful authentication still needs a Role, RoleBinding, or ClusterRoleBinding before the API allows the verb.</p>
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Lab identity access model</caption>
+            <thead>
+              <tr>
+                <th scope="col">Identity</th>
+                <th scope="col">Scope</th>
+                <th scope="col">Allowed</th>
+                <th scope="col">Denied</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">developer</th>
+                <td>security-lab</td>
+                <td>Pod operations and deployment management</td>
+                <td>Production and Secrets</td>
+              </tr>
+              <tr>
+                <th scope="row">auditor</th>
+                <td>security-lab</td>
+                <td>Read-only pod access</td>
+                <td>Writes, deployments, production, Secrets</td>
+              </tr>
+              <tr>
+                <th scope="row">security-admin</th>
+                <td>Cluster-wide pod reads</td>
+                <td>get, list, and watch pods</td>
+                <td>Delete pods, Secrets, cluster-admin</td>
+              </tr>
+              <tr>
+                <th scope="row">app-reader</th>
+                <td>security-lab</td>
+                <td>get, list, and watch pods</td>
+                <td>Pod writes, Secrets, production</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="controls" class="section">
+      <div class="wrap">
+        <p class="kicker">Security controls</p>
+        <h2>Controls in this lab</h2>
+        <div class="control-grid">
+          <article class="control">
+            <h3>X.509 authentication</h3>
+            <p>Human users present client certificates. The developer certificate subject is CN=developer, issued by minikubeCA.</p>
+          </article>
+          <article class="control">
+            <h3>RBAC</h3>
+            <p>Namespace Roles and a read-only ClusterRole grant only the verbs each identity needs.</p>
+          </article>
+          <article class="control">
+            <h3>Namespace isolation</h3>
+            <p>developer can work in security-lab and is denied when listing pods in production.</p>
+          </article>
+          <article class="control">
+            <h3>Least privilege</h3>
+            <p>No lab identity receives cluster-admin. security-admin cannot delete pods or read Secrets.</p>
+          </article>
+          <article class="control">
+            <h3>ServiceAccount security</h3>
+            <p>app-reader can read pods in security-lab and cannot write pods, read Secrets, or reach production.</p>
+          </article>
+          <article class="control">
+            <h3>Pod Security Admission</h3>
+            <p>security-lab enforces the baseline Pod Security Standard and blocks a privileged container.</p>
+          </article>
+          <article class="control">
+            <h3>Calico NetworkPolicy</h3>
+            <p>An ingress policy selects the Nginx pods. The same request that returned HTTP 200 later times out.</p>
+          </article>
+          <article class="control">
+            <h3>Kubernetes audit logging</h3>
+            <p>Metadata-level audit records the identity, resource, response code, and allow or forbid decision.</p>
+          </article>
+          <article class="control">
+            <h3>Automated RBAC tests</h3>
+            <p>scripts/test-rbac.sh runs 15 kubectl auth can-i checks. The captured run passed 15 and failed 0.</p>
+          </article>
+          <article class="control">
+            <h3>kubectl-who-can analysis</h3>
+            <p>The scanner lists who can delete pods in security-lab, including the developer RoleBinding.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="evidence" class="section">
+      <div class="wrap">
+        <p class="kicker">Security testing</p>
+        <h2>Evidence from the lab</h2>
+        <p class="section-intro">These are terminal captures from the repository. Select a capture to open it full size. The figures below are the runs recorded in <code>screenshots/</code>.</p>
+
+        <div class="evidence-stack">
+          <article class="evidence" id="evidence-matrix">
+            <p class="kicker">Automated authorization</p>
+            <h3>15 checks passed, 0 failed</h3>
+            <p>scripts/test-rbac.sh compared expected and actual kubectl auth can-i results for developer, auditor, and security-admin. This run reports Passed: 15 and Failed: 0.</p>
+            <a class="shot" href="screenshots/11-automated-rbac-pass-matrix.png">
+              <img src="screenshots/11-automated-rbac-pass-matrix.png" width="1024" height="706" alt="Terminal output of scripts/test-rbac.sh showing 15 authorization checks passed and 0 failed">
+            </a>
+          </article>
+
+          <article class="evidence" id="evidence-sa">
+            <p class="kicker">Workload identity</p>
+            <h3>app-reader can read pods only</h3>
+            <p>As system:serviceaccount:security-lab:app-reader, list pods in security-lab is yes. Create pods, get Secrets, and list pods in production are no.</p>
+            <a class="shot" href="screenshots/12-serviceaccount-readonly.png">
+              <img src="screenshots/12-serviceaccount-readonly.png" width="1024" height="170" alt="kubectl auth can-i results for app-reader: list pods yes, create pods no, get secrets no, list pods in production no">
+            </a>
+          </article>
+
+          <div class="sequence">
+          <article class="evidence" id="evidence-before">
+            <p class="kicker">Misconfiguration · before</p>
+            <h3>Secret access starts denied</h3>
+            <p>Before the insecure Role is applied, kubectl auth can-i get secrets for app-reader returns no.</p>
+            <a class="shot" href="screenshots/13-rbac-misconfiguration-before.png">
+              <img src="screenshots/13-rbac-misconfiguration-before.png" width="1024" height="107" alt="kubectl auth can-i get secrets for the app-reader ServiceAccount returns no">
+            </a>
+          </article>
+
+          <article class="evidence" id="evidence-after">
+            <p class="kicker">Misconfiguration · expanded</p>
+            <h3>Insecure RBAC allows Secrets</h3>
+            <p>After misconfigurations/app-reader-secret-access.yaml is applied, the same check returns yes.</p>
+            <a class="shot" href="screenshots/14-rbac-misconfiguration-after.png">
+              <img src="screenshots/14-rbac-misconfiguration-after.png" width="1024" height="104" alt="kubectl auth can-i get secrets for app-reader returns yes after the insecure Role is applied">
+            </a>
+          </article>
+
+          <article class="evidence" id="evidence-remediation">
+            <p class="kicker">Misconfiguration · remediated</p>
+            <h3>Removing the grant restores the deny</h3>
+            <p>After that Role and RoleBinding are removed, get secrets for app-reader returns no again.</p>
+            <a class="shot" href="screenshots/15-rbac-remediation-after.png">
+              <img src="screenshots/15-rbac-remediation-after.png" width="1024" height="87" alt="kubectl auth can-i get secrets for app-reader returns no after the insecure Role is removed">
+            </a>
+          </article>
+          </div>
+
+          <article class="evidence" id="evidence-psa">
+            <p class="kicker">Pod Security Admission</p>
+            <h3>A privileged pod is rejected</h3>
+            <p>kubectl apply of misconfigurations/privileged-pod.yaml is Forbidden. The pod violates PodSecurity baseline:latest because the nginx container sets privileged to true.</p>
+            <a class="shot" href="screenshots/16-pod-security-admission-denied.png">
+              <img src="screenshots/16-pod-security-admission-denied.png" width="1024" height="64" alt="kubectl apply of a privileged pod is Forbidden because it violates PodSecurity baseline:latest">
+            </a>
+          </article>
+
+          <div class="sequence">
+          <article class="evidence" id="evidence-net-before">
+            <p class="kicker">NetworkPolicy · before</p>
+            <h3>The test pod reaches Nginx</h3>
+            <p>From the network-test pod, a request to the Nginx workload returns HTTP/1.1 200 OK.</p>
+            <a class="shot" href="screenshots/17-networkpolicy-before.png">
+              <img src="screenshots/17-networkpolicy-before.png" width="1024" height="243" alt="curl from the network-test pod returns HTTP/1.1 200 OK from the Nginx workload">
+            </a>
+          </article>
+
+          <article class="evidence" id="evidence-net-after">
+            <p class="kicker">NetworkPolicy · after</p>
+            <h3>The same connection times out</h3>
+            <p>After deny-nginx-ingress is applied, that request hits the connect timeout and curl exits 28.</p>
+            <a class="shot" href="screenshots/18-networkpolicy-after.png">
+              <img src="screenshots/18-networkpolicy-after.png" width="1024" height="64" alt="curl from the network-test pod times out with exit code 28 after the NetworkPolicy is applied">
+            </a>
+          </article>
+          </div>
+
+          <div class="sequence">
+          <article class="evidence" id="evidence-audit-allow">
+            <p class="kicker">Audit · allow</p>
+            <h3>A successful pod list is recorded</h3>
+            <p>The auditor lists pods and receives HTTP 200. The Metadata audit event records resource pods and decision allow.</p>
+            <a class="shot" href="screenshots/19-audit-allowed.png">
+              <img src="screenshots/19-audit-allowed.png" width="1024" height="187" alt="Auditor lists pods successfully and the Kubernetes audit log records an allow decision with HTTP 200">
+            </a>
+          </article>
+
+          <article class="evidence" id="evidence-audit-forbid">
+            <p class="kicker">Audit · forbid</p>
+            <h3>A Secret request is recorded as forbidden</h3>
+            <p>The auditor’s list of Secrets is Forbidden. The audit event records resource secrets, code 403, and decision forbid.</p>
+            <a class="shot" href="screenshots/20-audit-forbidden.png">
+              <img src="screenshots/20-audit-forbidden.png" width="1024" height="154" alt="Auditor is Forbidden from listing Secrets and the audit log records a forbid decision with HTTP 403">
+            </a>
+          </article>
+          </div>
+
+          <article class="evidence" id="evidence-who-can">
+            <p class="kicker">Permission analysis</p>
+            <h3>Who can delete pods</h3>
+            <p>kubectl who-can delete pods -n security-lab lists the developer RoleBinding. Cluster system identities that can delete pods are listed as well.</p>
+            <a class="shot" href="screenshots/21-rbac-scanner-delete-pods.png">
+              <img src="screenshots/21-rbac-scanner-delete-pods.png" width="1024" height="365" alt="kubectl who-can delete pods in security-lab lists the developer RoleBinding and cluster system identities">
+            </a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="scenarios" class="section">
+      <div class="wrap">
+        <p class="kicker">Featured security scenarios</p>
+        <h2>Three changes, and what the API did</h2>
+        <div class="scenario-grid">
+          <article class="scenario">
+            <p class="kicker">Scenario 1</p>
+            <h3>RBAC privilege expansion and remediation</h3>
+            <ol>
+              <li>The app-reader ServiceAccount cannot get Secrets. <a href="#evidence-before">The check returns no.</a></li>
+              <li>An insecure Role and RoleBinding in misconfigurations/app-reader-secret-access.yaml are applied on purpose.</li>
+              <li>Secret access becomes allowed. <a href="#evidence-after">The same check returns yes.</a></li>
+              <li>The insecure Role and RoleBinding are removed.</li>
+              <li>Secret access returns to denied. <a href="#evidence-remediation">The check returns no again.</a></li>
+            </ol>
+            <p>A small RBAC edit was enough to expand a read-only workload identity. Removing that grant put the boundary back.</p>
+          </article>
+
+          <article class="scenario">
+            <p class="kicker">Scenario 2</p>
+            <h3>Network isolation</h3>
+            <ol>
+              <li>A test pod requests the Nginx workload and receives HTTP 200. <a href="#evidence-net-before">See the response.</a></li>
+              <li>The Calico-enforced NetworkPolicy deny-nginx-ingress is applied to those Nginx pods.</li>
+              <li>The same connection times out. <a href="#evidence-net-after">curl exits 28.</a></li>
+            </ol>
+            <p>RBAC never saw this packet. The policy is the control that stops pod-to-pod traffic.</p>
+          </article>
+
+          <article class="scenario">
+            <p class="kicker">Scenario 3</p>
+            <h3>Audit visibility</h3>
+            <ol>
+              <li>An allowed pod list by the auditor produces code 200 and decision allow. <a href="#evidence-audit-allow">See the event.</a></li>
+              <li>A forbidden Secret list produces code 403 and decision forbid. <a href="#evidence-audit-forbid">See the denial.</a></li>
+            </ol>
+            <p>Audit logging is Metadata level, so the record keeps the identity, verb, resource, and decision without storing request or response bodies.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="validation" class="section">
+      <div class="wrap">
+        <p class="kicker">Automated validation</p>
+        <h2>15 authorization checks, then static checks in CI</h2>
+        <p><code>scripts/test-rbac.sh</code> runs <code>kubectl auth can-i</code> for developer, auditor, and security-admin. Each check compares the actual answer with the expected allow or deny across pods, deployments, Secrets, and both namespaces.</p>
+        <dl class="results">
+          <div>
+            <dt>Passed</dt>
+            <dd>15</dd>
+          </div>
+          <div>
+            <dt>Failed</dt>
+            <dd>0</dd>
+          </div>
+        </dl>
+        <p>That 15 and 0 result is the local run captured in <a href="#evidence-matrix">the test matrix</a>.</p>
+        <p>GitHub Actions security validation is defined in <code>.github/workflows/security-checks.yml</code>. On push and pull request to main it checks Bash syntax, runs ShellCheck on the lab scripts, and lints the YAML under manifests, misconfigurations, audit, and the workflow directory. This page does not report a live Actions result.</p>
+      </div>
+    </section>
+
+    <section id="lessons" class="section">
+      <div class="wrap">
+        <p class="kicker">Security lessons</p>
+        <h2>What the lab is meant to show</h2>
+        <ul class="lessons">
+          <li>Authentication is separate from authorization.</li>
+          <li>Namespace RBAC reduces blast radius.</li>
+          <li>Workload identities require least privilege.</li>
+          <li>Admission controls can block unsafe workloads.</li>
+          <li>NetworkPolicy provides isolation RBAC cannot.</li>
+          <li>Audit logs provide investigation evidence.</li>
+          <li>Automated authorization tests help detect regressions.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="tools" class="section">
+      <div class="wrap">
+        <p class="kicker">Tools</p>
+        <h2>What the lab uses</h2>
+        <ul class="badges tools">
+          <li>Kubernetes</li>
+          <li>Minikube</li>
+          <li>Docker Desktop</li>
+          <li>Calico</li>
+          <li>kubectl</li>
+          <li>kubectl-who-can</li>
+          <li>Krew</li>
+          <li>OpenSSL</li>
+          <li>Bash</li>
+          <li>YAML</li>
+          <li>Git</li>
+          <li>GitHub</li>
+          <li>GitHub Actions</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div>
+        <p class="footer-title">Kubernetes RBAC Security Lab</p>
+        <p>Built by Keyshawn Jeannot. MIT license. Not a production cluster.</p>
+        <p><a href="https://github.com/The1keyy/kubernetes-rbac-security-lab">https://github.com/The1keyy/kubernetes-rbac-security-lab</a></p>
+      </div>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/The1keyy/kubernetes-rbac-security-lab">View Repository</a>
+        <a class="button" href="https://github.com/The1keyy/kubernetes-rbac-security-lab/blob/main/README.md">View README</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
