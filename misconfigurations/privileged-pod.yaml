@@ -1,0 +1,13 @@
+# INTENTIONALLY INSECURE — LAB USE ONLY
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privileged-test
+  namespace: security-lab
+spec:
+  containers:
+    - name: nginx
+      image: nginx
+      securityContext:
+        privileged: true
