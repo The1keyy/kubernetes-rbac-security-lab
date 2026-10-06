@@ -1,60 +1,40 @@
-Kubernetes RBAC Security Lab
+# Kubernetes RBAC Security Lab
 
-Author: The1keyy
-License: MIT
+**The1keyy** · MIT · Minikube
 
-A hands-on Kubernetes security lab built with Minikube to demonstrate authentication, RBAC, least privilege, workload identity, Pod Security Admission, NetworkPolicy enforcement, audit logging, automated authorization testing, and RBAC security analysis.
+A hands-on Kubernetes security lab that shows authentication, least-privilege RBAC, workload identity, Pod Security Admission, NetworkPolicy enforcement, audit logging, automated authorization testing, and RBAC analysis.
 
-This project is designed as a local learning and portfolio environment for Kubernetes Security, Cloud Security, DevSecOps, Platform Security, and Security Engineering roles.
+Portfolio evidence for Kubernetes Security, Cloud Security, DevSecOps, Platform Security, and Security Engineering.
 
 This is a learning lab, not a production Kubernetes environment.
 
-What This Project Demonstrates
+```bash
+./scripts/setup.sh
+./scripts/test-rbac.sh
+```
 
-X.509 certificate-based Kubernetes users
+[Architecture](#architecture) · [Access model](#access-model) · [Authentication](#authentication-vs-authorization) · [RBAC](#rbac-design) · [Validation](#rbac-validation) · [ServiceAccount](#serviceaccount-security) · [Misconfiguration](#rbac-misconfiguration-and-remediation) · [Pod Security](#pod-security-admission) · [NetworkPolicy](#network-isolation) · [Audit](#kubernetes-audit-logging) · [Scanning](#rbac-security-scanning) · [Setup](#reproducible-setup)
 
-Authentication vs authorization
+## What this project demonstrates
 
-Namespace-scoped RBAC
+- X.509 certificate-based Kubernetes users
+- Authentication versus authorization
+- Namespace-scoped RBAC and namespace isolation
+- ClusterRole and ClusterRoleBinding with least privilege
+- Automated RBAC testing
+- Kubernetes ServiceAccounts and workload identity
+- Controlled RBAC misconfiguration and remediation
+- Pod Security Admission
+- NetworkPolicy enforcement with Calico
+- Kubernetes audit logging
+- RBAC permission analysis with kubectl-who-can
+- Reproducible setup and cleanup scripts
 
-ClusterRole and ClusterRoleBinding
+## Architecture
 
-Least privilege
+Two namespaces: `security-lab` and `production`. The workload is a three-replica Nginx Deployment in `security-lab`.
 
-Namespace isolation
-
-Automated RBAC testing
-
-Kubernetes ServiceAccounts
-
-Workload identity
-
-Controlled RBAC misconfiguration and remediation
-
-Pod Security Admission
-
-NetworkPolicy enforcement with Calico
-
-Kubernetes audit logging
-
-RBAC permission analysis with kubectl-who-can
-
-Reproducible setup and cleanup scripts
-
-Architecture
-
-The lab uses two namespaces:
-
-security-lab
-
-production
-
-The primary application is a three-replica Nginx Deployment inside security-lab.
-
-![Three-replica Nginx workload running in security-lab](screenshots/00-nginx-workload-security-lab.png)
-
-Three Nginx pods are Running, and the Deployment and ReplicaSet report 3/3 Ready in security-lab.
-
+```text
 Minikube Kubernetes Cluster
 │
 ├── security-lab
@@ -62,7 +42,6 @@ Minikube Kubernetes Cluster
 │   │   ├── Pod
 │   │   ├── Pod
 │   │   └── Pod
-│   │
 │   ├── developer
 │   ├── auditor
 │   ├── app-reader ServiceAccount
@@ -73,479 +52,222 @@ Minikube Kubernetes Cluster
 │
 └── Cluster-wide
     └── security-admin read-only pod access
+```
 
-See diagrams/architecture.md for additional architecture notes.
+![Three-replica Nginx workload running in security-lab](screenshots/00-nginx-workload-security-lab.png)
 
-Access Model
+*Three Nginx pods are Running, and the Deployment and ReplicaSet report 3/3 Ready in `security-lab`.*
 
-Identity
+More detail: [diagrams/architecture.md](diagrams/architecture.md).
 
-Scope
+## Access model
 
-Allowed
+No lab identity receives unrestricted `cluster-admin`.
 
-Denied
+| Identity | Scope | Allowed | Denied |
+| --- | --- | --- | --- |
+| developer | `security-lab` | View, create, and delete pods; manage deployments | Production access; Secrets |
+| auditor | `security-lab` | Get, list, and watch pods | Pod writes; deployments; production; Secrets |
+| security-admin | Cluster-wide pod reads | Get, list, and watch pods across namespaces | Delete pods; Secrets; cluster-admin |
+| app-reader | `security-lab` | Get, list, and watch pods | Pod writes; Secrets; production access |
 
-developer
+## Authentication vs authorization
 
-security-lab
+Authentication answers who you are. Authorization answers what you are allowed to do.
 
-View, create, and delete pods; manage deployments
+Human identities use X.509 client certificates. The developer authenticated successfully before any RBAC grant, and Kubernetes still denied pod access.
 
-Production access; Secrets
-
-auditor
-
-security-lab
-
-Get, list, and watch pods
-
-Pod writes; deployments; production; Secrets
-
-security-admin
-
-Cluster-wide pod reads
-
-Get, list, and watch pods across namespaces
-
-Delete pods; Secrets; cluster-admin
-
-app-reader
-
-security-lab
-
-Get, list, and watch pods
-
-Pod writes; Secrets; production access
-
-The project intentionally avoids granting any lab identity unrestricted cluster-admin privileges.
-
-Authentication vs Authorization
-
-Authentication answers:
-
-Who are you?
-
-Authorization answers:
-
-What are you allowed to do?
-
-The human identities in this lab use X.509 client certificates.
-
-For example, developer authenticated successfully before receiving RBAC permissions, but Kubernetes still denied pod access.
-
-Error from server (Forbidden): pods is forbidden:
-User "developer" cannot list resource "pods"
-in the namespace "security-lab"
-
-![Authenticated developer forbidden from listing pods before RBAC](screenshots/02-developer-forbidden-before-rbac.png)
-
-The developer certificate authenticates, and Kubernetes still returns Forbidden before a RoleBinding exists.
-
-After applying the developer Role and RoleBinding, the same identity was able to access the workload.
-
-![Developer lists pods after the Role and RoleBinding](screenshots/03-developer-access-after-rbac.png)
-
-The same developer identity lists the three Running Nginx pods after RBAC is applied.
-
-Certificate identity:
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/02-developer-forbidden-before-rbac.png" alt="Authenticated developer forbidden from listing pods before RBAC" width="100%">
+      <br><sub>Before RBAC: the developer certificate authenticates, and list pods returns Forbidden.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/03-developer-access-after-rbac.png" alt="Developer lists pods after the Role and RoleBinding" width="100%">
+      <br><sub>After the Role and RoleBinding: the same identity lists the three Running Nginx pods.</sub>
+    </td>
+  </tr>
+</table>
 
 ![X.509 client certificate for the developer identity](screenshots/01-certificate-identity.png)
 
-The developer certificate subject is CN=developer and the issuer is minikubeCA.
+*The developer certificate subject is `CN=developer` and the issuer is `minikubeCA`.*
 
-Private keys, CSRs, kubeconfig files, and sensitive certificates are intentionally excluded from this repository.
+Private keys, CSRs, kubeconfig files, and sensitive certificates stay out of this repository.
 
-RBAC Design
+## RBAC design
 
-Developer
+### Developer
 
-The developer uses a namespace-scoped Role and RoleBinding inside security-lab.
+Namespace-scoped Role and RoleBinding in `security-lab`.
 
-Allowed:
+Allowed: get, list, and watch pods; create pods; delete pods; manage deployments.
 
-get pods
-
-list pods
-
-watch pods
-
-create pods
-
-delete pods
-
-manage deployments
-
-Denied:
-
-Secrets
-
-equivalent access in production
+Denied: Secrets, and the same access in `production`.
 
 ![Developer denied listing pods in production](screenshots/06-developer-denied-production.png)
 
-Namespace-scoped RBAC stops developer from listing pods in production.
+*Namespace-scoped RBAC stops developer from listing pods in `production`.*
 
-Auditor
+### Auditor
 
-The auditor has read-only access to pods inside security-lab.
+Read-only pods in `security-lab`.
 
-Allowed:
+Allowed: get, list, and watch pods.
 
-get pods
+Denied: create pods, delete pods, manage deployments, production access, and Secrets.
 
-list pods
+### Security admin
 
-watch pods
+Read-only ClusterRole for pods.
 
-Denied:
+Allowed: get, list, and watch pods across namespaces.
 
-create pods
-
-delete pods
-
-manage deployments
-
-production access
-
-Secrets
-
-Security Admin
-
-The security-admin identity uses a read-only ClusterRole.
-
-Allowed:
-
-get pods across namespaces
-
-list pods across namespaces
-
-watch pods across namespaces
-
-Denied:
-
-delete pods
-
-read Secrets
-
-unrestricted cluster administration
+Denied: delete pods, read Secrets, and unrestricted cluster administration.
 
 ![security-admin lists pods across namespaces and is denied pod deletion](screenshots/07-security-admin-cross-namespace-access.png)
 
-security-admin can list pods in security-lab and production, and kubectl auth can-i delete pods returns no.
+*`security-admin` can list pods in `security-lab` and `production`, and `kubectl auth can-i delete pods` returns no.*
 
-RBAC Validation
+## RBAC validation
 
 ![Manual kubectl auth can-i results for developer, auditor, and security-admin](screenshots/09-rbac-can-i-matrix.png)
 
-Manual can-i checks allow developer pod and deployment actions in security-lab, keep auditor read-only, and deny security-admin delete and Secret access.
+*Manual `can-i` checks allow developer pod and deployment actions in `security-lab`, keep auditor read-only, and deny security-admin delete and Secret access.*
 
-Automated RBAC Testing
+### Automated RBAC testing
 
-The project includes:
+[`scripts/test-rbac.sh`](scripts/test-rbac.sh) runs `kubectl auth can-i` and compares identity, action, resource, namespace, expected result, and actual result. The suite covers 15 authorization checks.
 
-scripts/test-rbac.sh
+![Automated RBAC test matrix with 15 passed and 0 failed](screenshots/11-automated-rbac-pass-matrix.png)
 
-The script automatically validates expected permissions using:
+*Passed: 15. Failed: 0. All RBAC tests passed, so the same checks can be rerun after a security change.*
 
-kubectl auth can-i
+## ServiceAccount security
 
-It compares:
+Workload identity: `system:serviceaccount:security-lab:app-reader`.
 
-identity
+Can get, list, and watch pods. Cannot create pods, delete pods, read Secrets, or access production workloads.
 
-action
+![app-reader ServiceAccount can list pods and cannot write pods, read Secrets, or reach production](screenshots/12-serviceaccount-readonly.png)
 
-resource
+*list pods: yes · create pods: no · get secrets: no · production: no.*
 
-namespace
+See [docs/service-account-security.md](docs/service-account-security.md).
 
-expected result
+## RBAC misconfiguration and remediation
 
-actual result
+`app-reader` starts without Secret access. Applying [`misconfigurations/app-reader-secret-access.yaml`](misconfigurations/app-reader-secret-access.yaml) expands that identity to `get` and `list` Secrets. Removing the insecure Role and RoleBinding returns Secret access to denied.
 
-The current test suite validates 15 authorization checks.
+The sequence shows privilege expansion, excessive permissions, detection, remediation, and validation.
 
-Passed: 15
-Failed: 0
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <img src="screenshots/13-rbac-misconfiguration-before.png" alt="app-reader Secret access denied before the misconfiguration" width="100%">
+      <br><sub>Before: Secret access is denied.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <img src="screenshots/14-rbac-misconfiguration-after.png" alt="app-reader Secret access allowed after insecure RBAC" width="100%">
+      <br><sub>After the insecure Role: Secret access is allowed.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <img src="screenshots/15-rbac-remediation-after.png" alt="app-reader Secret access denied again after remediation" width="100%">
+      <br><sub>After remediation: Secret access is denied again.</sub>
+    </td>
+  </tr>
+</table>
 
-ALL RBAC TESTS PASSED
+See [docs/rbac-misconfiguration-lab.md](docs/rbac-misconfiguration-lab.md).
 
+## Pod Security Admission
 
+`security-lab` enforces the Kubernetes `baseline` Pod Security Standard. A pod with `securityContext.privileged: true` is rejected before it can run.
 
-This makes the RBAC configuration repeatable and easier to regression-test after security changes.
+![Kubernetes blocks a privileged pod with Pod Security baseline](screenshots/16-pod-security-admission-denied.png)
 
-ServiceAccount Security
+*Admission returns Forbidden: the pod violates PodSecurity `baseline:latest`.*
 
-The lab includes a workload identity:
+See [docs/pod-security-admission.md](docs/pod-security-admission.md).
 
-system:serviceaccount:security-lab:app-reader
+## Network isolation
 
-The app-reader ServiceAccount can:
+The Minikube cluster uses Calico, so NetworkPolicy is enforced. A test pod can reach Nginx before the policy. After `deny-nginx-ingress`, the same connection times out.
 
-get pods
+RBAC controls Kubernetes API actions. NetworkPolicy controls workload network traffic.
 
-list pods
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/17-networkpolicy-before.png" alt="HTTP 200 from the test pod before NetworkPolicy" width="100%">
+      <br><sub>Before the policy: the test pod receives HTTP/1.1 200 OK from Nginx.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/18-networkpolicy-after.png" alt="Connection timeout after NetworkPolicy denies ingress" width="100%">
+      <br><sub>After the policy: the same request times out (curl exit 28).</sub>
+    </td>
+  </tr>
+</table>
 
-watch pods
+See [docs/network-isolation.md](docs/network-isolation.md).
 
-It cannot:
+## Kubernetes audit logging
 
-create pods
+API audit logging is enabled at the Metadata level. Records include the requesting identity, impersonated identity, resource, namespace, action, response status, and authorization decision, without full request or response bodies.
 
-delete pods
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/19-audit-allowed.png" alt="Auditor lists pods and the audit event allows the request" width="100%">
+      <br><sub>Allowed: auditor lists pods. Audit shows resource pods, code 200, decision allow.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/20-audit-forbidden.png" alt="Auditor is forbidden from Secrets and the audit event records forbid" width="100%">
+      <br><sub>Forbidden: auditor lists Secrets. Audit shows resource secrets, code 403, decision forbid.</sub>
+    </td>
+  </tr>
+</table>
 
-read Secrets
+Policy: [`audit/audit-policy.yaml`](audit/audit-policy.yaml).
 
-access production workloads
+## RBAC security scanning
 
-Example:
+`kubectl-who-can` answers which identities can perform an action. `kubectl auth can-i` answers whether one identity can.
 
-list pods:   yes
-create pods: no
-get secrets: no
-production:  no
-
-
-
-See docs/service-account-security.md.
-
-RBAC Misconfiguration and Remediation
-
-The project includes a controlled, intentionally insecure RBAC scenario.
-
-The app-reader ServiceAccount initially cannot read Secrets:
-
-no
-
-An intentionally insecure Role and RoleBinding are then applied:
-
-misconfigurations/app-reader-secret-access.yaml
-
-After the misconfiguration:
-
-yes
-
-The insecure RBAC is removed and Secret access returns to:
-
-no
-
-This demonstrates:
-
-privilege expansion
-
-excessive permissions
-
-RBAC misconfiguration
-
-detection
-
-remediation
-
-validation
-
-Evidence:
-
-13-rbac-misconfiguration-before.png
-
-14-rbac-misconfiguration-after.png
-
-15-rbac-remediation-after.png
-
-See docs/rbac-misconfiguration-lab.md.
-
-Pod Security Admission
-
-The security-lab namespace enforces the Kubernetes:
-
-baseline
-
-Pod Security Standard.
-
-An intentionally insecure pod attempts to use:
-
-securityContext:
-  privileged: true
-
-Kubernetes blocks the workload before it can run.
-
-Error from server (Forbidden):
-violates PodSecurity "baseline:latest"
-
-
-
-This demonstrates preventive workload security.
-
-See docs/pod-security-admission.md.
-
-Network Isolation
-
-The Minikube cluster uses Calico so Kubernetes NetworkPolicy rules are actually enforced.
-
-Before applying the NetworkPolicy:
-
-HTTP/1.1 200 OK
-
-The test pod could communicate with the Nginx workload.
-
-
-
-A NetworkPolicy was then applied to deny ingress traffic to the selected Nginx pods.
-
-After the policy:
-
-curl: (28) Connection timed out
-
-
-
-This demonstrates that RBAC and NetworkPolicy protect different layers:
-
-RBAC controls Kubernetes API actions.
-
-NetworkPolicy controls workload network traffic.
-
-See docs/network-isolation.md.
-
-Kubernetes Audit Logging
-
-Kubernetes API audit logging is enabled at the Metadata level.
-
-This captures important security information without recording full request or response bodies.
-
-Audit records include:
-
-requesting identity
-
-impersonated identity
-
-requested resource
-
-namespace
-
-action
-
-response status
-
-authorization decision
-
-Allowed Request
-
-The auditor identity successfully listed pods.
-
-The audit event recorded:
-
-resource: pods
-code: 200
-decision: allow
-
-
-
-Forbidden Request
-
-The auditor attempted to list Secrets.
-
-Kubernetes returned:
-
-Forbidden
-
-The audit event recorded:
-
-resource: secrets
-code: 403
-decision: forbid
-
-
-
-Audit configuration:
-
-audit/audit-policy.yaml
-
-RBAC Security Scanning
-
-The project uses:
-
-kubectl-who-can
-
-to identify Kubernetes subjects capable of performing selected API actions.
-
-Example:
-
+```bash
 kubectl who-can delete pods -n security-lab
+```
 
-The scanner correctly identified the developer RoleBinding as granting pod deletion permission.
+![kubectl-who-can lists subjects that can delete pods](screenshots/21-rbac-scanner-delete-pods.png)
 
+*The scanner shows the developer RoleBinding grants pod deletion in `security-lab`.*
 
+See [security-scans/rbac-findings.md](security-scans/rbac-findings.md).
 
-This complements kubectl auth can-i.
+## Reproducible setup
 
-kubectl auth can-i asks:
+[`scripts/setup.sh`](scripts/setup.sh) checks required tools and Minikube, applies namespaces, deploys Nginx, applies human-user RBAC, creates the ServiceAccount, applies workload RBAC, enables Pod Security Admission, applies NetworkPolicy, waits for rollout, and prints a security summary.
 
-Can this identity perform this action?
-
-kubectl who-can asks:
-
-Which identities can perform this action?
-
-See security-scans/rbac-findings.md.
-
-Reproducible Setup
-
-The repository includes:
-
-scripts/setup.sh
-
-The setup script:
-
-verifies required tools
-
-checks Minikube
-
-applies namespaces
-
-deploys Nginx
-
-applies human-user RBAC
-
-creates the ServiceAccount
-
-applies workload RBAC
-
-enables Pod Security Admission
-
-applies NetworkPolicy
-
-waits for rollout completion
-
-prints a security summary
-
-Run:
-
+```bash
 ./scripts/setup.sh
+```
 
-Safe Cleanup
+![Setup script completes with namespaces, Nginx, and RBAC in place](screenshots/10-reproducible-setup-success.png)
 
-The project also includes:
+*The script finishes with `security-lab` and `production` Active, Nginx 3/3 Ready, and the lab RBAC objects present.*
 
-scripts/cleanup.sh
+### Safe cleanup
 
-The cleanup script removes only resources belonging to this lab.
+[`scripts/cleanup.sh`](scripts/cleanup.sh) removes only this lab’s resources. It does not delete Minikube, unrelated namespaces, local project files, or audit configuration files.
 
-It does not:
-
-delete Minikube
-
-delete unrelated namespaces
-
-remove local project files
-
-delete audit configuration files
-
-Run:
-
+```bash
 ./scripts/cleanup.sh
+```
 
-Repository Structure
+## Repository structure
 
+```text
 kubernetes-rbac-security-lab/
 ├── README.md
 ├── LICENSE
@@ -584,163 +306,62 @@ kubernetes-rbac-security-lab/
 ├── diagrams/
 │   └── architecture.md
 └── screenshots/
-
-Security Controls Demonstrated
-
-Control
-
-Security Purpose
-
-X.509 authentication
-
-Establish user identity
-
-RBAC
-
-Restrict Kubernetes API permissions
-
-Namespace isolation
-
-Reduce access scope and blast radius
-
-Least privilege
-
-Limit permissions to required actions
-
-ServiceAccounts
-
-Provide workload identity
-
-Pod Security Admission
-
-Block unsafe pod configurations
-
-NetworkPolicy
-
-Restrict pod-to-pod network communication
-
-Audit logging
-
-Record API and authorization activity
-
-Automated RBAC tests
-
-Detect unexpected authorization changes
-
-RBAC scanning
-
-Identify identities with sensitive privileges
-
-Threats Addressed
-
-The lab explores risks including:
-
-overprivileged users
-
-overprivileged ServiceAccounts
-
-compromised credentials
-
-cross-namespace lateral movement
-
-excessive ClusterRole permissions
-
-accidental Secret exposure
-
-privileged workloads
-
-unrestricted pod-to-pod traffic
-
-incorrect RoleBindings
-
-privilege expansion through RBAC changes
-
-See docs/threat-model.md.
-
-Security Practices
-
-Sensitive files must never be committed.
-
-The .gitignore excludes items such as:
-
-*.key
-*.csr
-certificates/
-kubeconfig
-*.kubeconfig
-ca.key
-sa.key
-
-Do not commit:
-
-private keys
-
-cluster CA private keys
-
-Kubernetes Secrets
-
-bearer tokens
-
-kubeconfig credentials
-
-passwords
-
-cloud credentials
-
-Tools
-
-Kubernetes
-
-Minikube
-
-Docker Desktop
-
-Calico
-
-kubectl
-
-kubectl-who-can
-
-Krew
-
-OpenSSL
-
-Bash
-
-YAML
-
-Git
-
-GitHub
-
-macOS Terminal
-
-Key Security Lessons
-
-Authentication does not automatically provide authorization.
-
-Namespace-scoped RBAC can reduce blast radius.
-
-Cluster-wide permissions should be narrowly defined.
-
-ServiceAccounts should follow least privilege.
-
-Small RBAC changes can create meaningful privilege expansion.
-
-Pod Security Admission can prevent unsafe workloads before execution.
-
-NetworkPolicy provides isolation that RBAC alone cannot provide.
-
-Audit logs provide evidence for successful and denied activity.
-
-Automated validation makes security controls easier to maintain.
-
-Security scanning can expose unexpected or excessive permissions.
-
-License
-
-MIT
-
-This repository is intended for learning, security experimentation, and portfolio demonstration.
+```
+
+## Security controls demonstrated
+
+| Control | Security purpose |
+| --- | --- |
+| X.509 authentication | Establish user identity |
+| RBAC | Restrict Kubernetes API permissions |
+| Namespace isolation | Reduce access scope and blast radius |
+| Least privilege | Limit permissions to required actions |
+| ServiceAccounts | Provide workload identity |
+| Pod Security Admission | Block unsafe pod configurations |
+| NetworkPolicy | Restrict pod-to-pod network communication |
+| Audit logging | Record API and authorization activity |
+| Automated RBAC tests | Detect unexpected authorization changes |
+| RBAC scanning | Identify identities with sensitive privileges |
+
+## Threats addressed
+
+- Overprivileged users and ServiceAccounts
+- Compromised credentials
+- Cross-namespace lateral movement
+- Excessive ClusterRole permissions
+- Accidental Secret exposure
+- Privileged workloads
+- Unrestricted pod-to-pod traffic
+- Incorrect RoleBindings
+- Privilege expansion through RBAC changes
+
+See [docs/threat-model.md](docs/threat-model.md).
+
+## Security practices
+
+Sensitive files stay uncommitted. `.gitignore` excludes `*.key`, `*.csr`, `certificates/`, `kubeconfig`, `*.kubeconfig`, `ca.key`, and `sa.key`.
+
+Do not commit private keys, cluster CA private keys, Kubernetes Secrets, bearer tokens, kubeconfig credentials, passwords, or cloud credentials.
+
+## Tools
+
+Kubernetes, Minikube, Docker Desktop, Calico, kubectl, kubectl-who-can, Krew, OpenSSL, Bash, YAML, Git, GitHub, and macOS Terminal.
+
+## Key security lessons
+
+- Authentication does not automatically provide authorization.
+- Namespace-scoped RBAC can reduce blast radius.
+- Cluster-wide permissions should be narrowly defined.
+- ServiceAccounts should follow least privilege.
+- Small RBAC changes can create meaningful privilege expansion.
+- Pod Security Admission can prevent unsafe workloads before execution.
+- NetworkPolicy provides isolation that RBAC alone cannot provide.
+- Audit logs provide evidence for successful and denied activity.
+- Automated validation makes security controls easier to maintain.
+- Security scanning can expose unexpected or excessive permissions.
+
+## License
+
+MIT. This repository is for learning, security experimentation, and portfolio demonstration.
 
 Do not commit sensitive Kubernetes credentials or private keys.
