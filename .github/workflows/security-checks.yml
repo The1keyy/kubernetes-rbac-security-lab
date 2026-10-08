@@ -1,6 +1,7 @@
+---
 name: Security Checks
 
-on:
+"on":
   push:
     branches:
       - main

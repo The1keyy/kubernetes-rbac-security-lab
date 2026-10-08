@@ -1,5 +1,5 @@
 # INTENTIONALLY INSECURE — LAB USE ONLY
-
+---
 apiVersion: v1
 kind: Pod
 metadata:
